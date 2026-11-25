@@ -266,3 +266,33 @@ async def test_guide_tools(served):
     assert bad.is_error and "couldn't understand the day" in text(bad)
     for r in (now, listing, on, found):
         assert SENSITIVE["householdToken"] not in json.dumps(r.structured_content)
+
+
+async def test_booking_tools(served):
+    listing = await call(served, "tv_listings", {"channel": "104", "day": "tomorrow", "from_time": "21:00"})
+    goggle = listing.structured_content["programmes"][0]
+    booked = await call(served, "record_programme", {"channel": "104", "event_id": goggle["event_id"]})
+    assert not booked.is_error, text(booked)
+    assert booked.structured_content["action"] in ("booked", "already_booked")
+    pvr = booked.structured_content["recording"]["pvr_id"]
+    by_time = await call(served, "record_programme", {"channel": "Channel 4", "day": "tomorrow",
+                                                       "start_time": "21:30", "series": True})
+    assert by_time.structured_content["action"] == "series_linked"
+    scheduled = await call(served, "list_recordings", {"status": "scheduled", "search": "gogglebox"})
+    assert pvr in [r["pvr_id"] for r in scheduled.structured_content["recordings"]]
+    cancelled = await call(served, "cancel_recording", {"recording": pvr, "whole_series": True})
+    assert cancelled.structured_content["action"] == "cancelled" and cancelled.structured_content["verified"]
+    finished = await call(served, "cancel_recording", {"recording": "P290262cd"})
+    assert finished.is_error and "not scheduled" in text(finished)
+
+
+
+async def test_recording_a_finished_programme_says_so(served):
+    from datetime import datetime, timezone
+
+    listing = await call(served, "tv_listings", {"channel": "101", "day": "yesterday"
+                                                 if datetime.now(timezone.utc).hour < 2 else "today"})
+    done = next(p for p in listing.structured_content["programmes"]
+                if datetime.fromisoformat(p["end"]) < datetime.now(timezone.utc))
+    r = await call(served, "record_programme", {"channel": "101", "event_id": done["event_id"]})
+    assert r.is_error and "already finished" in text(r)

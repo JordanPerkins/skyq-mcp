@@ -240,6 +240,8 @@ def parse_day(value: str | None, today: date) -> date:
         d = today
     elif v == "tomorrow":
         d = today + timedelta(days=1)
+    elif v == "yesterday":
+        d = today - timedelta(days=1)
     elif v[:3] in [w[:3] for w in _WEEKDAYS] and v.isalpha():
         target = [w[:3] for w in _WEEKDAYS].index(v[:3])
         d = today + timedelta(days=(target - today.weekday()) % 7)

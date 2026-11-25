@@ -64,10 +64,11 @@ possible).
 |---|---|---|---|
 | List recordings and scheduled ones, storage used | `GET /as/pvr`, `/as/pvr/storage` | in MCP | |
 | Recording details (title, synopsis, episode) | `GET /as/pvr/details/P<id>` | in MCP (in now playing) | Could be its own tool |
-| **Record a programme** | `POST /as/pvr/action/bookrecording?eid=<event id>` | found | Event ID from the online guide |
-| **Record a series** | `POST /as/pvr/action/bookseriesrecording?eid=` | found | |
-| Series link / unlink an existing recording | `POST /as/pvr/action/serieslink?pvrid=`, `seriesunlink` | found | |
-| Delete to the recycle bin / restore | `POST /as/pvr/action/delete?pvrid=`, `undelete` | found | Reversible: the box has a `recycle` folder |
+| Record a programme | `POST /as/pvr/action/bookrecording?eid=<event id>` | in MCP (`record_programme`) | Event ID from the online guide; booking twice doesn't duplicate |
+| Record a series | `POST /as/pvr/action/bookseriesrecording?eid=` | in MCP (`record_programme` with `series`) | Series-linked bookings show `link: true` in details |
+| Series link / unlink an existing recording | `POST /as/pvr/action/serieslink?pvrid=`, `seriesunlink` | verified (used by `record_programme` / `cancel_recording`) | |
+| Cancel a scheduled recording | `POST /as/pvr/action/delete?pvrid=` | in MCP (`cancel_recording`) | Scheduled items only; removed from the list |
+| Delete a finished recording to the recycle bin / restore | `POST /as/pvr/action/delete?pvrid=`, `undelete` | found | Reversible: the box has a `recycle` folder |
 | Keep (stop auto-delete) / unkeep | `POST /as/pvr/action/keep?pvrid=`, `unkeep` | found | |
 | Lock / unlock (PIN-protect) | `POST /as/pvr/action/lock?pvrid=`, `unlock` | found | Unlock weakens parental control: see below |
 | Resume position | `POST /as/pvr/action/setlastplayedposition?pos=&pvrid=` | found | Niche |
@@ -124,7 +125,7 @@ possible).
 `find_programme(query, channels?, days?)`. Use `system/time` for local times and
 `deviceinformation` (allowed fields only) for the territory. Cache schedules.
 
-**2. Booking recordings (writes, reversible).** `record_programme(channel + time or event)`,
+**2. Booking recordings: done (2026-11-26).** `record_programme(channel + time or event)`,
 with `series: bool`, and `cancel_recording(pvr_id)` for scheduled items. Test on the box first
 with a programme the user picks.
 

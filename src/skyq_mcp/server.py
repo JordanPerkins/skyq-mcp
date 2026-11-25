@@ -38,7 +38,9 @@ Prefer the high-level tools, in this order:
 - open_app / close_app for apps like Netflix or Apple TV (checks the app is on screen) and list_apps;
 - power_on / power_off (only press power when needed); get_now_playing; list_recordings;
 - tv_listings, whats_on and find_programme for TV listings from Sky's guide (use these rather
-  than searching the web for what's on).
+  than searching the web for what's on);
+- record_programme to book a recording (or a series) from the guide, cancel_recording to cancel a
+  scheduled one. Don't use the record button (playback) for this.
 Last resort, for screens with no direct tool: navigate_to a menu destination. Menu routes may be
 wrong for this box and the server can't see the screen, so ask the user what's showing. When they
 confirm a route works (or you find the right keys with navigate/press_sequence), save it with
@@ -392,6 +394,40 @@ def build_server(manager: BoxManager, config: Config) -> MCPServer:
 
         searched, found = await manager.run(box, fetch)
         return {"channels_searched": searched, "matches": found}
+
+    # -- recording bookings ----------------------------------------------------------------------
+
+    @tool(IDEMPOTENT_CONTROL, "Record a programme")
+    async def record_programme(
+        channel: Annotated[str, Field(description="Channel number or name")],
+        start_time: Annotated[str | None, Field(description="A local time the programme is on, e.g. 21:00; omit for what's on now")] = None,
+        day: Annotated[str, Field(description="today, tomorrow, a weekday or YYYY-MM-DD")] = "today",
+        event_id: Annotated[str | None, Field(description="Exact programme, from tv_listings / find_programme (event_id)")] = None,
+        series: Annotated[bool, Field(description="Series-link it: record future episodes too")] = False,
+        box: Box = None,
+    ) -> dict[str, Any]:
+        """Book a recording from the TV guide. Pick the programme by event_id (best, from
+        tv_listings or find_programme), or by channel and a time it's on. Won't double-book;
+        asking for a series on an existing booking series-links it."""
+
+        async def run(b):
+            at = None
+            if not event_id and start_time:
+                tz = await b.local_time()
+                at = epg.parse_time(start_time, epg.parse_day(day, tz.today()), tz)
+            prog = await b.find_programme_at(channel, event_id=event_id, at=at)
+            return await b.record(prog, series=series)
+
+        return (await manager.run(box, run)).to_dict()
+
+    @tool(REMOVES_DATA, "Cancel a scheduled recording")
+    async def cancel_recording(
+        recording: Annotated[str, Field(description="pvr_id of a SCHEDULED recording, from list_recordings")],
+        whole_series: Annotated[bool, Field(description="Also remove its series link, so future episodes aren't booked")] = False,
+        box: Box = None,
+    ) -> dict[str, Any]:
+        """Cancel a scheduled (not yet started) recording. Finished recordings aren't deleted by this."""
+        return (await manager.run(box, lambda b: b.cancel_booking(recording, whole_series=whole_series))).to_dict()
 
     # -- apps ----------------------------------------------------------------------------------
 

@@ -136,6 +136,9 @@ class FakeSkyQ:
         self.app_status_broken = app_status_broken
         self.app_requests: list[tuple[str, str]] = []
         self.guide_requests: list[tuple[str, str]] = []
+        self.pvr_items = [dict(i) for i in PVR_ITEMS]
+        self.pvr_requests: list[tuple[str, dict]] = []
+        self.refuse_bookings = False
         self.guide_down = False
         self.received: list[int] = []
         self.handshake_errors: list[str] = []
@@ -358,13 +361,16 @@ class FakeSkyQ:
             from urllib.parse import parse_qs, urlsplit
             q = parse_qs(urlsplit(path).query)
             limit, offset = int(q["limit"][0]), int(q["offset"][0])
-            page = PVR_ITEMS[offset:offset + min(limit, 200)]
+            page = self.pvr_items[offset:offset + min(limit, 200)]
             return self._send(h, 200, json.dumps({"documentId": "1", "offset": offset, "pvrItems": page,
-                                                  "totalPvrItems": len(PVR_ITEMS), "version": 1}).encode())
+                                                  "totalPvrItems": len(self.pvr_items), "version": 1}).encode())
         if path.startswith("/as/pvr/details/"):
             pvr = path.rsplit("/", 1)[1]
             if pvr.startswith("P") and pvr.upper() in RECORDINGS:
                 return self._send(h, 200, json.dumps(RECORDINGS[pvr.upper()]).encode())
+            item = next((i for i in self.pvr_items if i["pvrid"].lower() == pvr.lower()), None)
+            if pvr.startswith("P") and item is not None:
+                return self._send(h, 200, json.dumps({"details": item}).encode())
             return self._send(h, 400, json.dumps({"errorCode": 1, "userMessage": "Bad request"}).encode())
         if path == "/description0.xml":
             return self._send(h, 200, _description("urn:schemas-nds-com:device:GatewaySkyServe:2",
@@ -376,6 +382,36 @@ class FakeSkyQ:
 
     def _http_post(self, h: BaseHTTPRequestHandler) -> None:
         h.rfile.read(int(h.headers.get("Content-Length", 0)))
+        if h.path.startswith("/as/pvr/action/"):
+            from urllib.parse import parse_qs, urlsplit
+            u = urlsplit(h.path)
+            action, q = u.path.rsplit("/", 1)[1], {k: v[0] for k, v in parse_qs(u.query).items()}
+            self.pvr_requests.append((action, q))
+            if self.refuse_bookings:
+                return self._send(h, 400, b'{"errorCode": 102, "userMessage": "Booking failed"}')
+            if action in ("bookrecording", "bookseriesrecording"):
+                eid = q.get("eid", "")
+                sid, _, st = eid[1:].partition("-")
+                if not st.isdigit():
+                    return self._send(h, 400, b'{"errorCode": 102, "userMessage": "Invalid Parameters"}')
+                if not any(i.get("oeid") == eid for i in self.pvr_items):
+                    ch = next(c for c in SERVICES if c["sid"] == sid)
+                    day = __import__("datetime").datetime.fromtimestamp(int(st), __import__("datetime").timezone.utc).strftime("%Y%m%d")
+                    ev = next(e for e in fake_schedule(day, sid) if e["eid"] == eid)
+                    self.pvr_items.insert(0, {"pvrid": f"P2903{len(self.pvr_items):04x}", "t": ev["t"], "cn": ch["t"],
+                                              "c": ch["c"], "st": ev["st"], "status": "SCHEDULED", "oeid": eid,
+                                              "link": action == "bookseriesrecording"})
+                return self._send(h, 200, b"")
+            item = next((i for i in self.pvr_items if i["pvrid"].lower() == q.get("pvrid", "").lower()), None)
+            if item is None:
+                return self._send(h, 400, b'{"errorCode": 102, "userMessage": "Invalid Parameters"}')
+            if action == "delete":
+                self.pvr_items.remove(item)
+            elif action in ("serieslink", "seriesunlink"):
+                item["link"] = action == "serieslink"
+            else:
+                return self._send(h, 404, b'{"errorCode": 101, "userMessage": "Invalid URL"}')
+            return self._send(h, 200, b"")
         if h.path.startswith("/as/apps/action/"):
             from urllib.parse import parse_qs, urlsplit
             u = urlsplit(h.path)

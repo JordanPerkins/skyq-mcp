@@ -115,6 +115,19 @@ class AppChange:
                 "already": self.already, "woke_box": self.woke_box, "note": self.note}
 
 
+@dataclass(frozen=True)
+class Booking:
+    action: str  # "booked" / "already_booked" / "series_linked" / "cancelled"
+    programme: dict[str, Any] | None
+    recording: dict[str, Any] | None
+    series: bool
+    verified: bool  # the booking showed up in (or disappeared from) the box's recordings list
+    note: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
 class SkyQBox:
     def __init__(self, host: str, *, remote_port: int = REMOTE_PORT, rest_port: int = REST_PORT,
                  upnp_port: int = UPNP_PORT, key_gap_ms: int = DEFAULT_GAP_MS,
@@ -256,6 +269,91 @@ class SkyQBox:
                 country = None
             self._guide = EpgClient(territory_for(country), base_url=self._epg_base_url or EPG_BASE)
         return self._guide
+
+    # -- recordings ------------------------------------------------------------------
+
+    async def find_programme_at(self, channel_query: str | int, *, event_id: str | None = None,
+                                at: float | None = None) -> Programme:
+        """The guide programme on a channel: by event id, on at a time, or on now."""
+        channel = (await self.rest.channels()).find(channel_query)
+        guide = await self.guide()
+        now = time.time()
+        if event_id:
+            progs = await guide.programmes(channel, now - 86400, now + 7 * 86400)  # finished ones too, for a clear error
+            match = next((p for p in progs if p.event_id == event_id), None)
+            if match is None:
+                raise SkyQError(f"no programme {event_id} on {channel.label()} in the TV guide")
+            return match
+        when = now if at is None else at
+        progs = await guide.programmes(channel, when - 6 * 3600, when + 6 * 3600)
+        match = next((p for p in progs if p.on_at(when)), None)
+        if match is None:
+            raise SkyQError(f"the TV guide has nothing on {channel.label()} at that time")
+        return match
+
+    async def record(self, programme: Programme, *, series: bool = False) -> Booking:
+        """Book a guide programme (optionally as a series), without double-booking."""
+        tz = await self.local_time()
+        prog = programme.to_dict(tz)
+        if programme.end <= time.time():
+            raise SkyQError(f"{programme.title} has already finished")
+        if not programme.can_record:
+            raise SkyQError(f"the TV guide says {programme.title} can't be recorded")
+        if series and not programme.can_series_link:
+            raise SkyQError(f"{programme.title} isn't part of a series that can be series-linked; "
+                            "record it on its own instead")
+        existing = await self._booking_for(programme)
+        if existing is not None:
+            if not series:
+                return Booking("already_booked", prog, existing.to_dict(), False, True)
+            details = await self.rest.recording(existing.pvr_id[1:])
+            if details and details.series_linked:
+                return Booking("already_booked", prog, existing.to_dict(), True, True)
+            await self.rest.series_link(existing.pvr_id, True)
+            return Booking("series_linked", prog, existing.to_dict(), True, True,
+                           note="It was already booked; it's now series-linked too.")
+        await self.rest.book(programme.event_id, series=series)
+        deadline = time.monotonic() + 6
+        while time.monotonic() < deadline:
+            await asyncio.sleep(0.75)
+            booked = await self._booking_for(programme)
+            if booked is not None:
+                return Booking("booked", prog, booked.to_dict(), series, True)
+        return Booking("booked", prog, None, series, False,
+                       note="The box accepted the booking but it hasn't appeared in the recordings list yet.")
+
+    async def _booking_for(self, programme: Programme):
+        for r in await self.rest.recordings():
+            if r.event_id == programme.event_id and r.status in ("SCHEDULED", "RECORDING", "PART REC", "RECORDED"):
+                return r
+        return None
+
+    async def cancel_booking(self, pvr_id: str, *, whole_series: bool = False) -> Booking:
+        """Cancel a scheduled recording. whole_series also removes its series link first."""
+        items = {r.pvr_id.lower(): r for r in await self.rest.recordings()}
+        rec = items.get(pvr_id.lower())
+        if rec is None:
+            raise SkyQError(f"no recording {pvr_id} on this box; use list_recordings to find it")
+        if rec.status != "SCHEDULED":
+            raise SkyQError(f"{rec.title} is {(rec.status or 'unknown').lower()}, not scheduled; only "
+                            "scheduled recordings can be cancelled")
+        details = await self.rest.recording(rec.pvr_id[1:])
+        linked = bool(details and details.series_linked)
+        if whole_series and linked:
+            await self.rest.series_link(rec.pvr_id, False)
+        await self.rest.delete(rec.pvr_id)
+        deadline = time.monotonic() + 6
+        gone = False
+        while time.monotonic() < deadline:
+            await asyncio.sleep(0.75)
+            if rec.pvr_id.lower() not in {r.pvr_id.lower() for r in await self.rest.recordings()}:
+                gone = True
+                break
+        note = None
+        if linked and not whole_series:
+            note = ("This was part of a series link. Only this episode was cancelled; the series link "
+                    "may still book future episodes. Use whole_series to cancel the series.")
+        return Booking("cancelled", None, rec.to_dict(), whole_series and linked, gone, note=note)
 
     # -- apps ----------------------------------------------------------------------
 

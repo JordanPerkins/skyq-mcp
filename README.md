@@ -54,6 +54,10 @@ the screen to check.
 reads Sky's own online TV guide: what's on now and next, a channel's schedule for any day this
 week, and searching for a programme across channels, all in your box's local time.
 
+**Recording from the guide.** "Record Gogglebox on Friday" or "series link the F1" become a
+single booking of the exact programme from Sky's guide. The server won't double-book, checks the
+booking appears on the box, and can cancel scheduled recordings (never finished ones).
+
 **Apps open directly.** "Go to Apple TV" doesn't need any menu navigation: the server reads the
 list of apps installed on your box, opens the right one by name, and checks it's on screen. That
 works even for apps that aren't on the Apps tray.

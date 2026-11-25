@@ -15,11 +15,14 @@ from typing import Any
 import json
 
 from . import http
-from .errors import AmbiguousChannel, ChannelNotFound, ProtocolError
+from urllib.parse import urlencode
+
+from .errors import AmbiguousChannel, ChannelNotFound, ProtocolError, SkyQError
 
 REST_PORT = 9006
 MAX_SERVICES_BYTES = 4 * 1024 * 1024  # ~400 channels is ~100 KB
 HEX_ID_RE = re.compile(r"^[0-9A-Fa-f]{1,16}$")
+PVR_PARAM_RE = re.compile(r"^[A-Za-z0-9-]{1,40}$")  # event ids (Ebc9-3cda) and pvr ids (P29026b55)
 
 
 def _text(value: Any, limit: int) -> str | None:
@@ -159,6 +162,7 @@ class Recording:
     status: str | None
     season: int | None
     episode: int | None
+    series_linked: bool = False
 
     @classmethod
     def from_api(cls, pvr_id: str, d: dict[str, Any]) -> Recording:
@@ -175,6 +179,7 @@ class Recording:
             status=_text(d.get("status"), 30),
             season=d.get("seasonnumber") if isinstance(d.get("seasonnumber"), int) else None,
             episode=d.get("episodenumber") if isinstance(d.get("episodenumber"), int) else None,
+            series_linked=d.get("link") is True,
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -207,6 +212,7 @@ class RecordingSummary:
     start: str | None  # when it started (or will start), ISO 8601 UTC
     scheduled_start: str | None  # the programme's listed start
     synopsis: str | None
+    event_id: str | None = None  # the guide event it came from (matches the guide's event_id)
 
     @classmethod
     def from_api(cls, d: dict[str, Any]) -> RecordingSummary:
@@ -219,6 +225,7 @@ class RecordingSummary:
             start=_iso(d.get("ast") or d.get("st")),
             scheduled_start=_iso(d.get("st")),
             synopsis=_text(d.get("sy"), 300),
+            event_id=_text(d.get("oeid"), 40),
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -317,6 +324,33 @@ class RestClient:
             return None
         code = data.get("countryCode")
         return code if isinstance(code, str) and code.isalpha() and len(code) <= 3 else None
+
+    # -- bookings (verified on an ES340, 2026-11-26) ---------------------------------
+    # POST /as/pvr/action/<action>?...: HTTP 200 with an empty body on success. Booking the same
+    # event twice doesn't create a duplicate. delete removes a scheduled booking from the list.
+
+    async def _pvr_action(self, action: str, **params: str) -> None:
+        for v in params.values():
+            if not PVR_PARAM_RE.match(v):
+                raise SkyQError(f"invalid value '{v[:40]}'")
+        url = f"http://{self.host}:{self.port}/as/pvr/action/{action}?{urlencode(params)}"
+        status, body = await http.request("POST", url, timeout=self.timeout)
+        if status != 200:
+            msg = ""
+            try:
+                msg = str(json.loads(body).get("userMessage", ""))[:120]
+            except (ValueError, AttributeError):
+                pass
+            raise SkyQError(f"the box refused '{action}' (HTTP {status}{': ' + msg if msg else ''})")
+
+    async def book(self, event_id: str, *, series: bool = False) -> None:
+        await self._pvr_action("bookseriesrecording" if series else "bookrecording", eid=event_id)
+
+    async def series_link(self, pvr_id: str, on: bool = True) -> None:
+        await self._pvr_action("serieslink" if on else "seriesunlink", pvrid=pvr_id)
+
+    async def delete(self, pvr_id: str) -> None:
+        await self._pvr_action("delete", pvrid=pvr_id)
 
     async def recording(self, pvr_hex_id: str) -> Recording | None:
         """Details of a recording, from the hex id in a `file://pvr/<id>` URI."""
