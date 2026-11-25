@@ -334,3 +334,22 @@ async def test_guide_gate_can_be_switched_off(fake, tmp_path):
     with ServerThread(build_app(config, [TOKEN], manager=manager)) as srv:
         r = await call(srv, "tv_listings", {"channel": "101"})
         assert "status" not in r.structured_content and r.structured_content["programmes"]
+
+
+
+async def test_gate_names_a_listings_site(served):
+    first = await call(served, "whats_on", {})
+    msg = first.structured_content["message"]
+    assert "tvguide.co.uk" in msg and "/on-now" in msg and "/channel/" in msg
+
+
+async def test_custom_listings_hint(fake, tmp_path):
+    from skyq_mcp.server import build_server
+
+    hint = "Fetch https://www.tvspielfilm.de/tv-programm/ for today's listings."
+    server = build_server(BoxManager(BoxRegistry(tmp_path / "s.json")),
+                          Config(data_dir=tmp_path, listings_hint=hint))
+    assert hint in server.instructions and "tvguide.co.uk" not in server.instructions
+    r = await server.call_tool("tv_listings", {"channel": "101"})
+    data = r.structured_content if hasattr(r, "structured_content") else r
+    assert hint in data["message"]

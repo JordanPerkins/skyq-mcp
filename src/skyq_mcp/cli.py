@@ -30,6 +30,8 @@ def _config(args) -> Config:
         cfg.allow_unsafe_keys = True
     if getattr(args, "no_guide_gate", False):
         cfg.guide_gate = False
+    if getattr(args, "listings_hint", None):
+        cfg.listings_hint = args.listings_hint.strip()
     if getattr(args, "allowed_host", None):
         cfg.allowed_hosts = args.allowed_host
     if getattr(args, "iface", None):
@@ -170,6 +172,8 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--allow-unsafe-keys", action="store_true", help="allow key codes 223-239 (remote pairing)")
     s.add_argument("--no-guide-gate", action="store_true",
                    help="let agents use Sky's TV guide tools without first being told to try their own lookup")
+    s.add_argument("--listings-hint", help="tell agents how to look up TV listings themselves "
+                                           "(default: tvguide.co.uk schedule pages, for the UK)")
     s.add_argument("--iface", help="local IP to send discovery multicast from")
     s.add_argument("--log-level", choices=["DEBUG", "INFO", "WARNING", "ERROR"])
     s.set_defaults(func=cmd_serve)

@@ -11,6 +11,16 @@ from pathlib import Path
 from .store import default_data_dir
 
 DEFAULT_PORT = 8765
+
+# Where agents should look up listings before falling back to Sky's guide (UK; checked 2026-11-26).
+# A general web search tends to find a show's regular weekly slot, not tonight's schedule.
+DEFAULT_LISTINGS_HINT = (
+    "Fetch the schedule pages of https://www.tvguide.co.uk directly: /on-now, /now-and-next or "
+    "/on-tonight for what's on across channels, and /channel/<channel-name> for one channel's "
+    "listings (e.g. /channel/channel-4-hd, /channel/4seven-hd, /channel/sky-atlantic-hd). A general "
+    "web search usually finds only a show's regular weekly slot, not today's schedule, and the "
+    "site's search page needs a browser, so use those pages."
+)
 MIN_TOKEN_LENGTH = 24
 TOKEN_FILE = "token"
 
@@ -36,6 +46,7 @@ class Config:
     discovery_iface: str | None = None
     log_level: str = "INFO"
     guide_gate: bool = True  # listings tools ask the agent to try its own lookup first
+    listings_hint: str = DEFAULT_LISTINGS_HINT  # how agents should look up listings themselves
 
     @classmethod
     def from_env(cls) -> Config:
@@ -53,6 +64,7 @@ class Config:
             discovery_iface=env.get("SKYQ_MCP_IFACE") or None,
             log_level=env.get("SKYQ_MCP_LOG_LEVEL", "INFO").upper(),
             guide_gate=not _bool(env.get("SKYQ_MCP_NO_GUIDE_GATE")),
+            listings_hint=(env.get("SKYQ_MCP_LISTINGS_HINT") or "").strip() or DEFAULT_LISTINGS_HINT,
         )
 
     @property

@@ -41,12 +41,13 @@ Prefer the high-level tools, in this order:
 - record_programme to book a recording (or a series) by channel and start time, cancel_recording to
   cancel a scheduled one. Don't use the record button (playback) for this.
 
-TV listings: for "what's on" questions, use your own usual way of looking up TV listings first
-(e.g. a web search); it's much faster. Only if that fails or isn't available, fall back to
-tv_listings, whats_on or find_programme, which read Sky's guide one channel at a time and can be
-slow (find_programme especially). Those tools first reply with a fallback_code instead of listings;
-pass it back only if your own lookup failed. To record something you found elsewhere, call record_programme
-with the channel and start time; you don't need these tools first.
+TV listings: for "what's on" questions, look listings up yourself first; it's much faster.
+{listings_hint}
+Only if that fails or isn't available, fall back to tv_listings, whats_on or find_programme, which
+read Sky's guide one channel at a time and can be slow (find_programme especially). Those tools
+first reply with a fallback_code instead of listings; pass it back only if your own lookup failed.
+To record something you found elsewhere, call record_programme with the channel and start time;
+you don't need these tools first.
 Last resort, for screens with no direct tool: navigate_to a menu destination. Menu routes may be
 wrong for this box and the server can't see the screen, so ask the user what's showing. When they
 confirm a route works (or you find the right keys with navigate/press_sequence), save it with
@@ -81,7 +82,8 @@ def _tool_errors(fn):
 
 
 def build_server(manager: BoxManager, config: Config) -> MCPServer:
-    server = MCPServer(name="skyq-mcp", title="Sky Q remote", version=__version__, instructions=INSTRUCTIONS)
+    server = MCPServer(name="skyq-mcp", title="Sky Q remote", version=__version__,
+                       instructions=INSTRUCTIONS.format(listings_hint=config.listings_hint))
     registry = manager.registry
 
     def tool(annotations: ToolAnnotations, title: str):
@@ -326,10 +328,9 @@ def build_server(manager: BoxManager, config: Config) -> MCPServer:
             return None
         return {
             "status": "use_your_own_listings_first",
-            "message": ("Look up TV listings your usual way first (for example a web search): it's much "
-                        "faster than Sky's guide, which is read one channel at a time. Only if that "
-                        "fails or isn't available, call this tool again with fallback_code set to the "
-                        "code below."),
+            "message": ("Look up TV listings yourself first: it's much faster than Sky's guide, which is "
+                        "read one channel at a time. " + config.listings_hint + " Only if that fails or "
+                        "isn't available, call this tool again with fallback_code set to the code below."),
             "fallback_code": guide_code,
         }
 
