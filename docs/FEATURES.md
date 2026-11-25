@@ -120,7 +120,7 @@ possible).
 
 ## Recommended roadmap
 
-**1. TV guide: done (2026-11-26).** Add Sky's online guide:
+**1. TV guide: done (2026-11-26).** In use it was slower than an agent's own listings lookup (web search), so the agent is told to use these tools only as a fallback. Add Sky's online guide:
 `get_now_playing` includes the programme on now and next; new `tv_listings(channel, day)` and
 `find_programme(query, channels?, days?)`. Use `system/time` for local times and
 `deviceinformation` (allowed fields only) for the territory. Cache schedules.

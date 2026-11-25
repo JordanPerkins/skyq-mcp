@@ -50,9 +50,10 @@ There's no "recordings" button on the remote. The assistant used what it knows a
 menu layout to turn the request into a sequence of key presses, and was upfront that it can't see
 the screen to check.
 
-**TV listings are built in.** The box only reports which channel it's on, so the server also
-reads Sky's own online TV guide: what's on now and next, a channel's schedule for any day this
-week, and searching for a programme across channels, all in your box's local time.
+**TV listings as a fallback.** The assistant looks up what's on in its usual way (for example a
+web search), which is fast. If that fails, the server can read Sky's own online TV guide: what's
+on now and next, a channel's schedule for any day this week, and searching for a programme across
+channels. That's slower, because Sky's guide is read one channel at a time.
 
 **Recording from the guide.** "Record Gogglebox on Friday" or "series link the F1" become a
 single booking of the exact programme from Sky's guide. The server won't double-book, checks the

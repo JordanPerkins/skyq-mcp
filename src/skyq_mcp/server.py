@@ -37,10 +37,14 @@ Prefer the high-level tools, in this order:
 - change_channel (by number or name; checks the box got there) and list_channels;
 - open_app / close_app for apps like Netflix or Apple TV (checks the app is on screen) and list_apps;
 - power_on / power_off (only press power when needed); get_now_playing; list_recordings;
-- tv_listings, whats_on and find_programme for TV listings from Sky's guide (use these rather
-  than searching the web for what's on);
-- record_programme to book a recording (or a series) from the guide, cancel_recording to cancel a
-  scheduled one. Don't use the record button (playback) for this.
+- record_programme to book a recording (or a series) by channel and start time, cancel_recording to
+  cancel a scheduled one. Don't use the record button (playback) for this.
+
+TV listings: for "what's on" questions, use your own usual way of looking up TV listings first
+(e.g. a web search); it's much faster. Only if that fails or isn't available, fall back to
+tv_listings, whats_on or find_programme, which read Sky's guide one channel at a time and can be
+slow (find_programme especially). To record something you found elsewhere, call record_programme
+with the channel and start time; you don't need these tools first.
 Last resort, for screens with no direct tool: navigate_to a menu destination. Menu routes may be
 wrong for this box and the server can't see the screen, so ask the user what's showing. When they
 confirm a route works (or you find the right keys with navigate/press_sequence), save it with
@@ -319,7 +323,8 @@ def build_server(manager: BoxManager, config: Config) -> MCPServer:
         from_time: Annotated[str | None, Field(description="Only programmes on at or after this local time, e.g. 19:00 or 7pm")] = None,
         box: Box = None,
     ) -> dict[str, Any]:
-        """A channel's schedule for a day, from Sky's TV guide, in the box's local time."""
+        """FALLBACK: a channel's schedule for a day from Sky's TV guide, in the box's local time.
+        Prefer your own TV listings lookup (e.g. web search); use this only if that fails."""
 
         async def fetch(b):
             tz, guide, channels = await _guide_ctx(b)
@@ -345,7 +350,8 @@ def build_server(manager: BoxManager, config: Config) -> MCPServer:
         day: Annotated[str, Field(description="Day for `at`: today, tomorrow, a weekday or YYYY-MM-DD")] = "today",
         box: Box = None,
     ) -> dict[str, Any]:
-        """What's on (and what's next) across channels, from Sky's TV guide."""
+        """FALLBACK: what's on (and next) across channels from Sky's TV guide. Slower than your own
+        TV listings lookup (e.g. web search); use this only if that fails."""
 
         async def fetch(b):
             tz, guide, chlist = await _guide_ctx(b)
@@ -381,7 +387,9 @@ def build_server(manager: BoxManager, config: Config) -> MCPServer:
         limit: Annotated[int, Field(ge=1, le=100)] = 30,
         box: Box = None,
     ) -> dict[str, Any]:
-        """Search Sky's TV guide for upcoming showings of a programme by title (from now on)."""
+        """LAST RESORT, SLOW (often 10-40 s): search Sky's TV guide for upcoming showings of a
+        programme across channels. Prefer your own TV listings lookup (e.g. web search); use this
+        only if that fails. Narrow it with `channels` and a small `days` where you can."""
 
         async def fetch(b):
             tz, guide, chlist = await _guide_ctx(b)
@@ -406,9 +414,9 @@ def build_server(manager: BoxManager, config: Config) -> MCPServer:
         series: Annotated[bool, Field(description="Series-link it: record future episodes too")] = False,
         box: Box = None,
     ) -> dict[str, Any]:
-        """Book a recording from the TV guide. Pick the programme by event_id (best, from
-        tv_listings or find_programme), or by channel and a time it's on. Won't double-book;
-        asking for a series on an existing booking series-links it."""
+        """Book a recording. Give the channel and a time the programme is on (from any listings
+        source, e.g. a web search), or an event_id if you already have one from tv_listings.
+        Won't double-book; asking for a series on an existing booking series-links it."""
 
         async def run(b):
             at = None
