@@ -61,6 +61,23 @@ lookup failed. (Turn this off with `--no-guide-gate` if your assistant can't sea
 single booking of the exact programme from Sky's guide. The server won't double-book, checks the
 booking appears on the box, and can cancel scheduled recordings (never finished ones).
 
+> **"Record The Great British Bakeoff"**
+>
+> I've booked a recording of the Great British Bake Off final tonight at 03:15 on 4seven (channel
+> 137). The Sky Q box shows it as scheduled.
+>
+> The final is also on Channel 4 HD right now, but it started at 23:05, so recording that one
+> would miss the first 37 minutes. That's why I picked the 03:15 repeat. This is the last episode
+> of the series, so I didn't set up a series link.
+>
+> The Second Helpings final is on Channel 4 HD tomorrow night at 00:35. I can record that too if
+> you'd like.
+
+A remote's record button would only have caught the final part-way through. Instead the assistant
+noticed the showing had already started, found a full repeat later that night on another channel,
+booked that, confirmed it on the box, chose not to series-link the last episode, and offered the
+companion show.
+
 **Apps open directly.** "Go to Apple TV" doesn't need any menu navigation: the server reads the
 list of apps installed on your box, opens the right one by name, and checks it's on screen. That
 works even for apps that aren't on the Apps tray.
