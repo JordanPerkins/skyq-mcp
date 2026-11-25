@@ -11,6 +11,7 @@ import sys
 from pathlib import Path
 
 from .config import Config, generate_token, read_token_file, resolve_tokens, write_token_file
+from .ipfilter import parse_networks
 from .manager import BoxManager
 from .skyq.errors import SkyQError
 from .store import BoxRegistry
@@ -32,6 +33,10 @@ def _config(args) -> Config:
         cfg.guide_gate = False
     if getattr(args, "listings_hint", None):
         cfg.listings_hint = args.listings_hint.strip()
+    if getattr(args, "allow_client", None):
+        cfg.allowed_clients = args.allow_client
+    if getattr(args, "trusted_proxy", None):
+        cfg.trusted_proxies = args.trusted_proxy
     if getattr(args, "allowed_host", None):
         cfg.allowed_hosts = args.allowed_host
     if getattr(args, "iface", None):
@@ -60,9 +65,17 @@ def cmd_serve(args) -> int:
         return 2
     try:
         tokens, new_token = resolve_tokens(cfg)
+        allowed = parse_networks(cfg.allowed_clients)
+        proxies = parse_networks(cfg.trusted_proxies)
     except ValueError as e:
         log.error("%s", e)
         return 2
+    if proxies and not allowed:
+        log.warning("trusted proxies are set but no client allowlist, so they have no effect")
+    if allowed:
+        log.info("only accepting requests from: %s%s", ", ".join(map(str, allowed)),
+                 f" (client address from X-Forwarded-For when sent by {', '.join(map(str, proxies))})"
+                 if proxies else "")
     if new_token:
         if sys.stderr.isatty():
             print(
@@ -172,6 +185,12 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--allow-unsafe-keys", action="store_true", help="allow key codes 223-239 (remote pairing)")
     s.add_argument("--no-guide-gate", action="store_true",
                    help="let agents use Sky's TV guide tools without first being told to try their own lookup")
+    s.add_argument("--allow-client", action="append",
+                   help="only accept requests from this IP or network, e.g. 192.168.1.0/24 (repeatable); "
+                        "default: any address (the token is always required)")
+    s.add_argument("--trusted-proxy", action="append",
+                   help="proxy whose X-Forwarded-For is trusted for the client address, e.g. 127.0.0.1 "
+                        "behind Tailscale Funnel (repeatable)")
     s.add_argument("--listings-hint", help="tell agents how to look up TV listings themselves "
                                            "(default: tvguide.co.uk schedule pages, for the UK)")
     s.add_argument("--iface", help="local IP to send discovery multicast from")

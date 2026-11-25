@@ -345,6 +345,27 @@ above). Some web-based clients only support OAuth and can't connect to this serv
    claude mcp add --transport http skyq https://pi.tail1234.ts.net/mcp --header "Authorization: Bearer YOUR_TOKEN"
    ```
 
+### Restricting which addresses can connect
+
+Optionally, the server can refuse requests from anywhere except addresses you list, before even
+checking the token. To accept only Claude's remote connectors through Funnel, add these lines to
+`/etc/skyq-mcp.env` and restart the service:
+
+```text
+SKYQ_MCP_ALLOWED_CLIENTS=160.79.104.0/21,153.61.208.0/20
+SKYQ_MCP_TRUSTED_PROXIES=127.0.0.1,::1
+```
+
+- The two ranges are the outbound addresses Anthropic uses for MCP tool calls, from
+  [Anthropic's IP address list](https://platform.claude.com/docs/en/api/ip-addresses) (checked
+  2026-11-26; Anthropic says they won't change without notice).
+- Funnel connects to the server from the Pi itself, so `SKYQ_MCP_TRUSTED_PROXIES` tells the
+  server to read the real client address from the `X-Forwarded-For` header Funnel sets. The
+  header is only trusted from those addresses, so nobody else can fake their address with it.
+- Anything not listed is refused with 403, including `/healthz` and clients on your own network.
+  To keep using the server directly at home too (e.g. Claude Code on your laptop), add your home
+  network, for example `,192.168.1.0/24`, to `SKYQ_MCP_ALLOWED_CLIENTS`.
+
 To see what's published, or stop publishing:
 
 ```bash
@@ -396,8 +417,12 @@ again later:
 On 32-bit Raspberry Pi OS, `cryptography` may need to be built from source if no ready-made
 package exists yet for the required version; 64-bit Raspberry Pi OS is recommended.
 
+- **Optionally, unknown addresses.** With `SKYQ_MCP_ALLOWED_CLIENTS` set, requests from anywhere
+  else are refused before the token is checked (see "Restricting which addresses can connect").
+
 What it doesn't protect against:
-- **Anyone who has the token** has full control of your saved boxes. Keep it secret, give it only
+- **Anyone who has the token** has full control of your saved boxes (unless you also restrict
+  which addresses can connect). Keep it secret, give it only
   to clients you trust, and replace it if it leaks (`token --generate --force`, then restart).
 - **Plain HTTP on your home network.** Without TLS, someone who can watch your network traffic
   can read the token. Use the TLS settings, or Tailscale (Funnel/Serve handle HTTPS for you).
@@ -419,6 +444,8 @@ What it doesn't protect against:
 | `SKYQ_MCP_ALLOWED_HOSTS` (comma-separated) | `--allowed-host` | extra hostnames clients use to reach the server (e.g. a Tailscale `*.ts.net` name); this machine's hostname, `.local` name and LAN IP are always allowed |
 | `SKYQ_MCP_SSL_CERTFILE` / `SKYQ_MCP_SSL_KEYFILE` | `--ssl-certfile` / `--ssl-keyfile` | off (plain HTTP) |
 | `SKYQ_MCP_ALLOW_UNSAFE_KEYS` | `--allow-unsafe-keys` | off (blocks remote-pairing codes 223–239) |
+| `SKYQ_MCP_ALLOWED_CLIENTS` (comma-separated) | `--allow-client` | any address (the token is always required); see "Restricting which addresses can connect" |
+| `SKYQ_MCP_TRUSTED_PROXIES` (comma-separated) | `--trusted-proxy` | none (`X-Forwarded-For` is ignored) |
 | `SKYQ_MCP_LISTINGS_HINT` | `--listings-hint` | tells the assistant to fetch tvguide.co.uk's schedule pages (UK); set your own text for other countries |
 | `SKYQ_MCP_NO_GUIDE_GATE` | `--no-guide-gate` | off (listings tools ask the assistant to try its own lookup first) |
 | `SKYQ_MCP_IFACE` | `--iface` | automatic (local IP to search for boxes from, if the machine has several networks) |

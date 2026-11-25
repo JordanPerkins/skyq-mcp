@@ -353,3 +353,39 @@ async def test_custom_listings_hint(fake, tmp_path):
     r = await server.call_tool("tv_listings", {"channel": "101"})
     data = r.structured_content if hasattr(r, "structured_content") else r
     assert hint in data["message"]
+
+
+def ip_restricted_app(fake, tmp_path, allowed, proxies):
+    registry = BoxRegistry(tmp_path / "state.json")
+    registry.add(BoxRecord(alias="lounge", hostname="localhost", last_ip="127.0.0.1", id=CONTROL_UDN,
+                           key_gap_ms=60, **fake.ports))
+    manager = BoxManager(registry, timing=FAST, allow_loopback=True)
+    config = Config(host="127.0.0.1", data_dir=tmp_path, allowed_hosts=["127.0.0.1"],
+                    allowed_clients=allowed, trusted_proxies=proxies)
+    return build_app(config, [TOKEN], manager=manager)
+
+
+async def test_ip_allowlist_end_to_end(fake, tmp_path):
+    # Set up like Tailscale Funnel: requests arrive from 127.0.0.1 with X-Forwarded-For.
+    app = ip_restricted_app(fake, tmp_path, ["160.79.104.0/21", "153.61.208.0/20"], ["127.0.0.1"])
+    auth = {**MCP_HEADERS, "Authorization": f"Bearer {TOKEN}"}
+    with ServerThread(app) as srv:
+        async with httpx.AsyncClient() as c:
+            ok = await c.post(f"{srv.url}/mcp", json=INIT, headers={**auth, "X-Forwarded-For": "160.79.104.9"})
+            other = await c.post(f"{srv.url}/mcp", json=INIT, headers={**auth, "X-Forwarded-For": "8.8.8.8"})
+            none = await c.post(f"{srv.url}/mcp", json=INIT, headers=auth)
+            no_token = await c.post(f"{srv.url}/mcp", json=INIT, headers={**MCP_HEADERS, "X-Forwarded-For": "8.8.8.8"})
+            health = await c.get(f"{srv.url}/healthz", headers={"X-Forwarded-For": "8.8.8.8"})
+    assert ok.status_code == 200
+    assert other.status_code == 403 and none.status_code == 403
+    assert no_token.status_code == 403  # refused before the token is even checked
+    assert health.status_code == 403
+
+
+async def test_no_allowlist_means_any_address(fake, tmp_path):
+    app = ip_restricted_app(fake, tmp_path, [], [])
+    with ServerThread(app) as srv:
+        async with httpx.AsyncClient() as c:
+            r = await c.post(f"{srv.url}/mcp", json=INIT,
+                             headers={**MCP_HEADERS, "Authorization": f"Bearer {TOKEN}", "X-Forwarded-For": "8.8.8.8"})
+    assert r.status_code == 200

@@ -17,6 +17,7 @@ from pydantic import Field
 
 from . import __version__
 from .auth import BearerAuthMiddleware
+from .ipfilter import ClientIPFilter, parse_networks
 from .config import Config, default_allowed_hosts, host_patterns
 from .manager import BoxManager
 from .skyq.errors import SkyQError
@@ -591,4 +592,8 @@ def build_app(config: Config, tokens: list[str], *, manager: BoxManager | None =
         allowed_origins=[],  # MCP clients don't send Origin; browsers do, and are refused
     )
     app = server.streamable_http_app(transport_security=security, host=config.host)
-    return BearerAuthMiddleware(app, tokens)
+    app = BearerAuthMiddleware(app, tokens)
+    if config.allowed_clients:  # outermost: refused addresses never reach the token check
+        app = ClientIPFilter(app, parse_networks(config.allowed_clients),
+                             parse_networks(config.trusted_proxies))
+    return app

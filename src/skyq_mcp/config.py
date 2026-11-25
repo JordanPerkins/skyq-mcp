@@ -47,6 +47,8 @@ class Config:
     log_level: str = "INFO"
     guide_gate: bool = True  # listings tools ask the agent to try its own lookup first
     listings_hint: str = DEFAULT_LISTINGS_HINT  # how agents should look up listings themselves
+    allowed_clients: list[str] = field(default_factory=list)  # empty: any address (token still needed)
+    trusted_proxies: list[str] = field(default_factory=list)  # e.g. 127.0.0.1 behind Tailscale Funnel
 
     @classmethod
     def from_env(cls) -> Config:
@@ -65,6 +67,8 @@ class Config:
             log_level=env.get("SKYQ_MCP_LOG_LEVEL", "INFO").upper(),
             guide_gate=not _bool(env.get("SKYQ_MCP_NO_GUIDE_GATE")),
             listings_hint=(env.get("SKYQ_MCP_LISTINGS_HINT") or "").strip() or DEFAULT_LISTINGS_HINT,
+            allowed_clients=_list(env.get("SKYQ_MCP_ALLOWED_CLIENTS")),
+            trusted_proxies=_list(env.get("SKYQ_MCP_TRUSTED_PROXIES")),
         )
 
     @property
