@@ -181,6 +181,64 @@ class Recording:
         return asdict(self)
 
 
+def _iso(ts: Any) -> str | None:
+    return datetime.fromtimestamp(ts, tz=timezone.utc).isoformat() if isinstance(ts, (int, float)) else None
+
+
+# Status values seen on an ES340: RECORDED, RECORDING, SCHEDULED, PART REC, FAILED.
+RECORDING_STATUSES = {
+    "recorded": {"RECORDED"},
+    "recording": {"RECORDING"},
+    "scheduled": {"SCHEDULED"},
+    "partial": {"PART REC"},
+    "failed": {"FAILED"},
+}
+
+
+@dataclass(frozen=True)
+class RecordingSummary:
+    """One entry in the box's recordings list (recorded, in progress, scheduled or failed)."""
+
+    pvr_id: str
+    title: str | None
+    channel_name: str | None
+    channel_number: str | None
+    status: str | None
+    start: str | None  # when it started (or will start), ISO 8601 UTC
+    scheduled_start: str | None  # the programme's listed start
+    synopsis: str | None
+
+    @classmethod
+    def from_api(cls, d: dict[str, Any]) -> RecordingSummary:
+        return cls(
+            pvr_id=_text(d.get("pvrid"), 20) or "",
+            title=_text(d.get("t"), 200),
+            channel_name=_text(d.get("cn"), 120),
+            channel_number=_text(d.get("c"), 8),
+            status=_text(d.get("status"), 30),
+            start=_iso(d.get("ast") or d.get("st")),
+            scheduled_start=_iso(d.get("st")),
+            synopsis=_text(d.get("sy"), 300),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
+class Storage:
+    used: int
+    total: int
+
+    @property
+    def percent_used(self) -> float:
+        return round(100 * self.used / self.total, 1) if self.total else 0.0
+
+    def to_dict(self) -> dict[str, Any]:
+        # Units are as the box reports them (not documented); the percentage is what matters.
+        return {"used": self.used, "total": self.total, "percent_used": self.percent_used}
+
+
 class RestClient:
     def __init__(self, host: str, *, port: int = REST_PORT, timeout: float = 5.0,
                  channel_ttl: float = 3600.0):
@@ -218,6 +276,30 @@ class RestClient:
         self._channels = ChannelList([Channel.from_api(s) for s in data.get("services", [])])
         self._channels_at = time.monotonic()
         return self._channels
+
+    async def recordings(self, *, max_items: int = 2000) -> list[RecordingSummary]:
+        """Everything in the box's recordings list, fetched a page at a time."""
+        out: list[RecordingSummary] = []
+        page = 200
+        while len(out) < max_items:
+            status, data = await self._get(f"/as/pvr?limit={page}&offset={len(out)}", max_bytes=MAX_SERVICES_BYTES)
+            if status != 200 or not isinstance(data, dict):
+                raise ProtocolError(f"/as/pvr returned HTTP {status}")
+            items = [i for i in data.get("pvrItems", []) if isinstance(i, dict)]
+            out += [RecordingSummary.from_api(i) for i in items]
+            total = data.get("totalPvrItems")
+            if not items or len(items) < page or (isinstance(total, int) and len(out) >= total):
+                break
+        return out[:max_items]
+
+    async def storage(self) -> Storage | None:
+        status, data = await self._get("/as/pvr/storage")
+        if status != 200 or not isinstance(data, dict):
+            return None
+        used, total = data.get("userQuotaUsed"), data.get("userQuotaMax")
+        if not isinstance(used, int) or not isinstance(total, int):
+            return None
+        return Storage(used=used, total=total)
 
     async def recording(self, pvr_hex_id: str) -> Recording | None:
         """Details of a recording, from the hex id in a `file://pvr/<id>` URI."""

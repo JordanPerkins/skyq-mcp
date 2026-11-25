@@ -174,3 +174,23 @@ async def test_find_hostnames_puts_dns_name_first(monkeypatch):
 
 def test_normalise():
     assert names.normalise("SkyQ.Local.") == "skyq.local"
+
+
+# -- recordings list -------------------------------------------------------------------------
+
+
+async def test_recordings_list_pages_through_everything(fake):
+    from fake_skyq import PVR_ITEMS
+
+    items = await rest(fake).recordings()
+    assert len(items) == len(PVR_ITEMS) == 250
+    office = next(r for r in items if r.pvr_id == "P29026b37")
+    assert office.status == "RECORDING" and office.start.startswith("2026-")
+    assert office.scheduled_start < office.start  # started from the live buffer, after listed start
+    scheduled = next(r for r in items if r.pvr_id == "P29026b39")
+    assert scheduled.start == scheduled.scheduled_start  # not started yet: falls back to listed time
+
+
+async def test_storage(fake):
+    s = await rest(fake).storage()
+    assert s.percent_used == 98.1 and s.to_dict()["total"] == 651040

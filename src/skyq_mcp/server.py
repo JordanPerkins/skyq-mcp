@@ -17,6 +17,7 @@ from .config import Config, default_allowed_hosts, host_patterns
 from .manager import BoxManager
 from .skyq.errors import SkyQError
 from .skyq.keys import ALIASES, KEYS, UNSAFE_CODES
+from .skyq.rest import RECORDING_STATUSES
 from .store import BoxRegistry
 
 log = logging.getLogger(__name__)
@@ -252,6 +253,30 @@ def build_server(manager: BoxManager, config: Config) -> MCPServer:
         return {"total_matching": len(found),
                 "channels": [{"number": c.number, "name": c.name, "quality": c.quality,
                               "timeshifted": c.timeshifted, "radio": c.radio} for c in found[:limit]]}
+
+    @tool(READ_ONLY, "List recordings")
+    async def list_recordings(
+        search: Annotated[str | None, Field(description="Only recordings whose title contains this")] = None,
+        status: Literal["all", "recorded", "recording", "scheduled", "partial", "failed"] = "all",
+        limit: Annotated[int, Field(ge=1, le=500)] = 50,
+        box: Box = None,
+    ) -> dict[str, Any]:
+        """Recordings on the box, newest first: finished, in progress, scheduled, part-recorded
+        and failed. Also reports how full the box's recording space is."""
+
+        async def fetch(b):
+            return await b.rest.recordings(), await b.rest.storage()
+
+        items, storage = await manager.run(box, fetch)
+        wanted = RECORDING_STATUSES.get(status)
+        needle = (search or "").strip().lower()
+        found = [r for r in items
+                 if (wanted is None or (r.status or "") in wanted)
+                 and (not needle or needle in (r.title or "").lower())]
+        found.sort(key=lambda r: r.start or "", reverse=True)
+        return {"storage": storage.to_dict() if storage else None,
+                "total_matching": len(found),
+                "recordings": [r.to_dict() for r in found[:limit]]}
 
     # -- resources ---------------------------------------------------------------------------
 

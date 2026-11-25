@@ -37,6 +37,25 @@ RECORDINGS = {
                               "pvrid": "P290262cd"}},
 }
 
+# 250 entries so clients must page (the real box pages with limit/offset).
+PVR_ITEMS = [
+    {"pvrid": "P290262cd", "t": "Gogglebox", "cn": "Channel 4 HD", "c": "104", "st": 1794351900,
+     "ast": 1794351780, "status": "RECORDED", "sy": "The sofa critics return."},
+    {"pvrid": "P29026b37", "t": "The Office", "cn": "U&Gold HD", "c": "110", "st": 1795645200,
+     "ast": 1795645987, "status": "RECORDING"},
+    {"pvrid": "P29026b39", "t": "The Office", "cn": "U&Gold HD", "c": "110", "st": 1795654800,
+     "status": "SCHEDULED"},
+    {"pvrid": "P2900ef07", "t": "Live League 2: Harrogate v Bromley", "cn": "SkySp+ HD", "c": "412",
+     "st": 1723297500, "ast": 1723297500, "status": "FAILED"},
+    {"pvrid": "P29022821", "t": "Live: 24 Hours of Le Mans", "cn": "TNT Sports 3", "c": "413",
+     "st": 1781413200, "ast": 1781413200, "status": "PART REC"},
+] + [
+    {"pvrid": f"P2901{n:04x}", "t": f"Old Episode {n}", "cn": "BBC Two HD", "c": "102",
+     "st": 1700000000 + n * 3600, "ast": 1700000000 + n * 3600, "status": "RECORDED"}
+    for n in range(245)
+]
+STORAGE = {"userQuotaMax": 651040, "userQuotaUsed": 638398}
+
 SENSITIVE = {
     "householdToken": "SECRET-HOUSEHOLD-TOKEN",
     "serialNumber": "SECRET-SERIAL",
@@ -214,6 +233,15 @@ class FakeSkyQ:
             return self._send(h, 200, json.dumps(info).encode())
         if path == "/as/services":
             return self._send(h, 200, json.dumps({"documentId": "1", "services": SERVICES, "version": 1}).encode())
+        if path == "/as/pvr/storage":
+            return self._send(h, 200, json.dumps(STORAGE).encode())
+        if path.startswith("/as/pvr?"):
+            from urllib.parse import parse_qs, urlsplit
+            q = parse_qs(urlsplit(path).query)
+            limit, offset = int(q["limit"][0]), int(q["offset"][0])
+            page = PVR_ITEMS[offset:offset + min(limit, 200)]
+            return self._send(h, 200, json.dumps({"documentId": "1", "offset": offset, "pvrItems": page,
+                                                  "totalPvrItems": len(PVR_ITEMS), "version": 1}).encode())
         if path.startswith("/as/pvr/details/"):
             pvr = path.rsplit("/", 1)[1]
             if pvr.startswith("P") and pvr.upper() in RECORDINGS:

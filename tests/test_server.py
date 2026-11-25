@@ -194,3 +194,16 @@ async def test_list_channels_tool(served):
     r = await call(served, "list_channels", {"search": "bbc", "include_radio": False})
     names = [c["name"] for c in r.structured_content["channels"]]
     assert names == ["BBC One Yks HD", "BBC Two HD", "BBC One Lon"]
+
+
+async def test_list_recordings_tool(served):
+    r = await call(served, "list_recordings", {"search": "office"})
+    assert not r.is_error, text(r)
+    data = r.structured_content
+    assert data["storage"]["percent_used"] == 98.1
+    assert [x["status"] for x in data["recordings"]] == ["SCHEDULED", "RECORDING"]  # newest first
+    failed = await call(served, "list_recordings", {"status": "failed"})
+    assert [x["title"] for x in failed.structured_content["recordings"]] == ["Live League 2: Harrogate v Bromley"]
+    everything = await call(served, "list_recordings", {"limit": 10})
+    assert everything.structured_content["total_matching"] == 250
+    assert len(everything.structured_content["recordings"]) == 10
