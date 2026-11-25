@@ -20,6 +20,7 @@ dependencies = [
     "httpx>=0.27",
     "mcp>=2.3,<3",
     "uvicorn>=0.31.1",
+    "websockets>=14",  # app status from the box (/as/apps/status)
     "zeroconf>=0.149.16",  # CVE-2026-47180/-47183/-47184/-48045/-48487: mDNS packets from the LAN
     # Security floors for packages that come in through mcp, whose own minimums allow
     # vulnerable versions (dependency audit 2026-11-25; see README "Security").

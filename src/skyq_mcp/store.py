@@ -51,6 +51,8 @@ class BoxRecord:
     rest_port: int = REST_PORT
     upnp_port: int = UPNP_PORT
     key_gap_ms: int = DEFAULT_GAP_MS
+    app_status_port: int | None = None  # None: same as rest_port (the real box)
+    menu_routes: dict = field(default_factory=dict)  # destination -> keys, confirmed on this box
     added: str = field(default_factory=now_iso)
     last_seen: str | None = None
 

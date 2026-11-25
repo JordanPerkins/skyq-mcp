@@ -11,6 +11,7 @@ from typing import Any, Literal
 from .errors import ChannelChangeFailed, SkyQError
 from .keys import KEYS, key_name, resolve_key
 from .remote import DEFAULT_GAP_MS, REMOTE_PORT, RemoteClient
+from .apps import App, AppsClient, foreground_app
 from .rest import HEX_ID_RE, REST_PORT, Channel, Recording, RestClient
 from .upnp import UPNP_PORT, UpnpClient
 
@@ -29,6 +30,7 @@ class Timing:
     power_repress_after: float = 6.0  # press again if nothing changed by then (see _set_power)
     power_max_presses: int = 3
     wake_settle: float = 3.0  # after waking, before typing digits
+    app_timeout: float = 12.0  # Apple TV took 2.7 s to appear and 3.2 s to close on an ES340
 
 
 @dataclass(frozen=True)
@@ -90,17 +92,34 @@ def parse_uri(uri: str | None) -> tuple[str, str] | None:
     return None
 
 
+@dataclass(frozen=True)
+class AppChange:
+    action: str  # "open" / "close"
+    app: App
+    verified: bool  # the box's app status confirmed it (False: couldn't confirm)
+    already: bool = False  # it was already open / closed, so nothing was sent
+    woke_box: bool = False
+    note: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"action": self.action, "app": self.app.to_dict(), "verified": self.verified,
+                "already": self.already, "woke_box": self.woke_box, "note": self.note}
+
+
 class SkyQBox:
     def __init__(self, host: str, *, remote_port: int = REMOTE_PORT, rest_port: int = REST_PORT,
                  upnp_port: int = UPNP_PORT, key_gap_ms: int = DEFAULT_GAP_MS,
-                 timing: Timing | None = None, allow_unsafe: bool = False):
+                 timing: Timing | None = None, allow_unsafe: bool = False,
+                 app_status_port: int | None = None):
         self.host = host
         self.timing = timing or Timing()
         self.allow_unsafe = allow_unsafe
         self.remote = RemoteClient(host, port=remote_port, gap_ms=key_gap_ms)
         self.rest = RestClient(host, port=rest_port)
         self.upnp = UpnpClient(host, port=upnp_port)
+        self.apps = AppsClient(host, port=rest_port, status_port=app_status_port)
         self._channel_lock = asyncio.Lock()
+        self._app_lock = asyncio.Lock()
 
     # -- keys ----------------------------------------------------------------------
 
@@ -192,6 +211,65 @@ class SkyQBox:
             if seen == number or time.monotonic() >= deadline:
                 return seen
             await asyncio.sleep(self.timing.poll_interval)
+
+    # -- apps ----------------------------------------------------------------------
+
+    async def app_on_screen(self) -> App | None:
+        """The app being shown, or None for normal TV (live channel, guide, menus)."""
+        async with self.apps.watch() as w:
+            app_id = foreground_app(w.visible)
+        if app_id is None:
+            return None
+        found = (await self.apps.apps()).by_id(app_id)
+        return found or App(app_id=app_id, title=app_id, blocked=False, pin_locked=False, on_apps_tray=False)
+
+    async def open_app(self, query: str) -> AppChange:
+        """Open an app by name or id, waking the box if needed, and confirm it's on screen."""
+        app = (await self.apps.apps()).find(query)
+        if app.blocked:
+            raise SkyQError(f"{app.title} is blocked on this box")
+        note = ("This app is PIN-locked: the box will ask for the PIN on screen." if app.pin_locked else None)
+        async with self._app_lock:
+            woke = False
+            if await self.rest.is_standby():
+                await self._set_power(want_standby=False)
+                woke = True
+                await asyncio.sleep(self.timing.wake_settle)
+            try:
+                async with self.apps.watch() as w:
+                    if app.app_id in w.visible:
+                        return AppChange("open", app, True, already=True, woke_box=woke, note=note)
+                    await self.apps.launch(app.app_id)
+                    ok = await w.wait_until(lambda v: app.app_id in v, self.timing.app_timeout)
+            except SkyQError as e:
+                if "refused" in str(e):
+                    raise
+                # Status unavailable: launch without confirmation.
+                log.info("app status unavailable (%s); launching unconfirmed", e)
+                await self.apps.launch(app.app_id)
+                return AppChange("open", app, False, woke_box=woke, note=note)
+            if not ok:
+                raise SkyQError(f"asked the box to open {app.title}, but it didn't appear on screen")
+            return AppChange("open", app, True, woke_box=woke, note=note)
+
+    async def close_app(self, query: str | None = None) -> AppChange:
+        """Close an app (by name or id), or whichever app is on screen, returning to TV."""
+        async with self._app_lock:
+            async with self.apps.watch() as w:
+                if query:
+                    app = (await self.apps.apps()).find(query)
+                else:
+                    current = foreground_app(w.visible)
+                    if current is None:
+                        raise SkyQError("no app is open; the box is showing TV")
+                    app = (await self.apps.apps()).by_id(current) or App(current, current, False, False, False)
+                if app.app_id not in w.visible:
+                    return AppChange("close", app, True, already=True)
+                await self.apps.close(app.app_id)
+                ok = await w.wait_until(lambda v: app.app_id not in v, self.timing.app_timeout)
+            if not ok:
+                raise SkyQError(f"asked the box to close {app.title}, but it's still on screen")
+            return AppChange("close", app, True)
 
     # -- power ---------------------------------------------------------------------
 

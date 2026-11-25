@@ -1,7 +1,8 @@
 # skyq-mcp
 
 An MCP server for controlling Sky Q boxes on your local network: discovery, every remote key,
-channel changes, power, and what's playing now. Designed to run on a Raspberry Pi.
+channel changes, power, opening apps, your recordings list, and what's playing now. Designed to
+run on a Raspberry Pi.
 
 > Unofficial. Sky Q is a trademark of Sky UK Limited; this project isn't affiliated with Sky.
 
@@ -49,9 +50,18 @@ There's no "recordings" button on the remote. The assistant used what it knows a
 menu layout to turn the request into a sequence of key presses, and was upfront that it can't see
 the screen to check.
 
+**Apps open directly.** "Go to Apple TV" doesn't need any menu navigation: the server reads the
+list of apps installed on your box, opens the right one by name, and checks it's on screen. That
+works even for apps that aren't on the Apps tray.
+
+**Menus are a last resort.** For screens with no direct command, the assistant can try a menu
+route. Sky Q menus vary between boxes and the server can't see the screen, so built-in routes are
+marked unverified and the assistant is told to check with you. Once you confirm a route works,
+it's saved for your box and used from then on.
+
 The server provides the reliable parts: finding your box on the network, sending keys with the
-right timing, changing channel and checking it worked, and reporting what's on. The assistant
-brings the knowledge and the judgement.
+right timing, changing channel and opening apps and checking they worked, and reporting what's
+on. The assistant brings the knowledge and the judgement.
 
 ## Quick start (on the Pi)
 
@@ -331,7 +341,9 @@ What the server protects against:
   A device on your network pretending to be a box can't redirect the server's requests to other
   addresses, and oversized replies are cut off.
 - **Remote unpairing.** Key codes that open the remote-control pairing screens are blocked unless
-  you start the server with `--allow-unsafe-keys`.
+  you start the server with `--allow-unsafe-keys`, including inside saved menu routes.
+- **Parental controls.** Apps blocked on the box are refused. PIN-locked apps still ask for the
+  PIN on the TV; the server never sees or enters it.
 - **Leaking box secrets.** The box reports its serial number, viewing card number and a household
   token; the server never reads those fields, so they can't reach an MCP client.
 

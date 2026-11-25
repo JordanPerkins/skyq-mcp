@@ -77,13 +77,14 @@ class BoxManager:
 
     def box(self, record: BoxRecord, ip: str) -> SkyQBox:
         """A SkyQBox for a record at ip, reused while the address and settings stay the same."""
-        key = (ip, record.remote_port, record.rest_port, record.upnp_port, record.key_gap_ms)
+        key = (ip, record.remote_port, record.rest_port, record.upnp_port, record.key_gap_ms, record.app_status_port)
         cached = self._boxes.get(record.alias)
         if cached and cached[0] == key:
             return cached[1]
         box = SkyQBox(ip, remote_port=record.remote_port, rest_port=record.rest_port,
                       upnp_port=record.upnp_port, key_gap_ms=record.key_gap_ms,
-                      timing=self.timing, allow_unsafe=self.allow_unsafe)
+                      timing=self.timing, allow_unsafe=self.allow_unsafe,
+                      app_status_port=record.app_status_port)
         self._boxes[record.alias] = (key, box)
         return box
 
@@ -196,8 +197,8 @@ class BoxManager:
         return out
 
     async def save(self, alias: str, address: str, *, remote_port: int = discovery.REMOTE_PORT,
-                   rest_port: int = discovery.REST_PORT, upnp_port: int = discovery.UPNP_PORT
-                   ) -> tuple[BoxRecord, str | None]:
+                   rest_port: int = discovery.REST_PORT, upnp_port: int = discovery.UPNP_PORT,
+                   app_status_port: int | None = None) -> tuple[BoxRecord, str | None]:
         """Check the box at address (an IP or a hostname) and save it under alias.
 
         Saved by hostname whenever one is known, so DHCP address changes don't matter.
@@ -232,7 +233,7 @@ class BoxManager:
                        "by that name.")
         record = BoxRecord(alias=alias, hostname=hostname, last_ip=ip, id=cand.id, model=cand.model,
                            last_seen=now_iso(), remote_port=remote_port, rest_port=rest_port,
-                           upnp_port=upnp_port)
+                           upnp_port=upnp_port, app_status_port=app_status_port)
         record = self.registry.add(record)
         self._resolved[record.alias] = _Resolved(ip, time.monotonic())
         return record, warning

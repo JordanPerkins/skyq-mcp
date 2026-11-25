@@ -56,6 +56,23 @@ PVR_ITEMS = [
 ]
 STORAGE = {"userQuotaMax": 651040, "userQuotaUsed": 638398}
 
+APPS = [
+    {"appId": "apple.tv", "title": "Apple TV", "blocked": False, "pinLocked": False, "visibleOnTray": False},
+    {"appId": "Netflix", "title": "Netflix", "blocked": False, "pinLocked": False, "visibleOnTray": True},
+    {"appId": "iPlayer", "title": "BBC iPlayer", "blocked": False, "pinLocked": False, "visibleOnTray": True},
+    {"appId": "com.bskyb.sports", "title": "Sky Sports", "blocked": False, "pinLocked": False, "visibleOnTray": False},
+    {"appId": "com.sky.sports.six", "title": "Sky Sports", "blocked": False, "pinLocked": False, "visibleOnTray": True},
+    {"appId": "com.bskyb.news", "title": "Sky News", "blocked": False, "pinLocked": False, "visibleOnTray": False},
+    {"appId": "com.sky.news.two", "title": "Sky News", "blocked": False, "pinLocked": False, "visibleOnTray": False},
+    {"appId": "nba", "title": "NBA", "blocked": True, "pinLocked": False, "visibleOnTray": False},
+    {"appId": "com.sky.qkids", "title": "Sky Kids Games", "blocked": False, "pinLocked": True, "visibleOnTray": True},
+    {"appId": "com.bskyb.epgui", "title": "EPG_UI", "blocked": False, "pinLocked": False, "visibleOnTray": False},
+    {"appId": "com.bskyb.metricstore.titan", "title": "com.bskyb.metricstore", "blocked": False,
+     "pinLocked": False, "visibleOnTray": False},
+    {"appId": "com.juno.fanview", "title": "@juno-ui/juno-fanview", "blocked": True, "pinLocked": False,
+     "visibleOnTray": False},
+]
+
 SENSITIVE = {
     "householdToken": "SECRET-HOUSEHOLD-TOKEN",
     "serialNumber": "SECRET-SERIAL",
@@ -85,7 +102,8 @@ FAULT = b"""<s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/"><s:B
 class FakeSkyQ:
     def __init__(self, *, channel: str = "101", stray_digits: str = "", drop_under_ms: int = 40,
                  standby: bool = False, upnp_broken: bool = False, power_delay: float = 0.0,
-                 ignore_power_after_standby: float = 0.0):
+                 ignore_power_after_standby: float = 0.0, ignore_app_launch: bool = False,
+                 app_status_broken: bool = False):
         self.channel = channel
         self.buffer = stray_digits
         self.drop_under_ms = drop_under_ms
@@ -95,6 +113,10 @@ class FakeSkyQ:
         self.ignore_power_after_standby = ignore_power_after_standby
         self._standby_since = 0.0
         self.recording: str | None = None  # hex pvr id when "playing a recording"
+        self.foreground_app: str | None = None  # app on screen, over the TV interface
+        self.ignore_app_launch = ignore_app_launch
+        self.app_status_broken = app_status_broken
+        self.app_requests: list[tuple[str, str]] = []
         self.received: list[int] = []
         self.handshake_errors: list[str] = []
         self._last_digit = 0.0
@@ -127,17 +149,71 @@ class FakeSkyQ:
         self._http = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
         self.http_port = self._http.server_address[1]
         threading.Thread(target=self._http.serve_forever, kwargs={"poll_interval": 0.02}, daemon=True).start()
+        self._start_app_status()
         return self
+
+    # -- app status WebSocket (the real box serves it on the REST port) ------------------
+
+    def _start_app_status(self) -> None:
+        import asyncio
+
+        from websockets.asyncio.server import serve
+
+        ready = threading.Event()
+        self._ws_clients = set()
+
+        async def handler(ws):
+            if self.app_status_broken:
+                await ws.close(1011)
+                return
+            self._ws_clients.add(ws)
+            try:
+                await ws.send(self._status_message())
+                await ws.wait_closed()
+            finally:
+                self._ws_clients.discard(ws)
+
+        async def main():
+            self._ws_server = await serve(handler, "127.0.0.1", 0)
+            self.ws_port = self._ws_server.sockets[0].getsockname()[1]
+            self._ws_stop = asyncio.Event()
+            ready.set()
+            await self._ws_stop.wait()
+            self._ws_server.close()
+
+        self._ws_loop = asyncio.new_event_loop()
+        threading.Thread(target=self._ws_loop.run_until_complete, args=(main(),), daemon=True).start()
+        ready.wait(5)
+
+    def _status_message(self) -> str:
+        visible = {"com.bskyb.epgui"} | ({self.foreground_app} if self.foreground_app else set())
+        apps = [{"appId": a["appId"], "status": "VISIBLE" if a["appId"] in visible else "STOPPED"} for a in APPS]
+        apps.append({"appId": "com.bskyb.metricstore.titan", "status": "RUNNING"})
+        return json.dumps({"apps": apps})
+
+    def _push_status(self, delay: float = 0.05) -> None:
+        async def push():
+            import asyncio
+            await asyncio.sleep(delay)
+            msg = self._status_message()
+            for ws in list(self._ws_clients):
+                try:
+                    await ws.send(msg)
+                except Exception:
+                    pass
+        self._ws_loop.call_soon_threadsafe(lambda: self._ws_loop.create_task(push()))
 
     def stop(self) -> None:
         self._stop.set()
+        self._ws_loop.call_soon_threadsafe(self._ws_stop.set)
         self._http.shutdown()
         self._http.server_close()
         self._remote.close()
 
     @property
     def ports(self) -> dict[str, int]:
-        return {"remote_port": self.remote_port, "rest_port": self.http_port, "upnp_port": self.http_port}
+        return {"remote_port": self.remote_port, "rest_port": self.http_port, "upnp_port": self.http_port,
+                "app_status_port": self.ws_port}
 
     # -- remote protocol -------------------------------------------------------------
 
@@ -233,6 +309,8 @@ class FakeSkyQ:
             return self._send(h, 200, json.dumps(info).encode())
         if path == "/as/services":
             return self._send(h, 200, json.dumps({"documentId": "1", "services": SERVICES, "version": 1}).encode())
+        if path == "/as/apps":
+            return self._send(h, 200, json.dumps({"apps": APPS, "version": 1}).encode())
         if path == "/as/pvr/storage":
             return self._send(h, 200, json.dumps(STORAGE).encode())
         if path.startswith("/as/pvr?"):
@@ -257,6 +335,22 @@ class FakeSkyQ:
 
     def _http_post(self, h: BaseHTTPRequestHandler) -> None:
         h.rfile.read(int(h.headers.get("Content-Length", 0)))
+        if h.path.startswith("/as/apps/action/"):
+            from urllib.parse import parse_qs, urlsplit
+            u = urlsplit(h.path)
+            action, app_id = u.path.rsplit("/", 1)[1], (parse_qs(u.query).get("appId") or [""])[0]
+            self.app_requests.append((action, app_id))
+            if action not in ("launch", "close"):
+                return self._send(h, 404, b'{"errorCode": 101, "userMessage": "Invalid URL"}')
+            if not any(a["appId"] == app_id for a in APPS):
+                return self._send(h, 400, b'{"errorCode": 102, "userMessage": "Invalid Parameters"}')
+            if action == "launch" and not self.ignore_app_launch:
+                self.foreground_app = app_id
+                self._push_status(0.1)
+            elif action == "close" and self.foreground_app == app_id:
+                self.foreground_app = None
+                self._push_status(0.1)
+            return self._send(h, 200, b"")
         if h.headers.get("User-Agent") != "SKYPLUS_skyplus" or h.path != "/control-ctl" or self.upnp_broken:
             return self._send(h, 500, FAULT, "text/xml")
         action = h.headers.get("SOAPACTION", "").strip('"').split("#")[-1]

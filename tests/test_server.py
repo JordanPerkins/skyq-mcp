@@ -207,3 +207,39 @@ async def test_list_recordings_tool(served):
     everything = await call(served, "list_recordings", {"limit": 10})
     assert everything.structured_content["total_matching"] == 250
     assert len(everything.structured_content["recordings"]) == 10
+
+
+async def test_app_tools(served):
+    listed = await call(served, "list_apps")
+    titles = [a["title"] for a in listed.structured_content["apps"]]
+    assert "Apple TV" in titles and "EPG_UI" not in titles and listed.structured_content["on_screen"] is None
+    opened = await call(served, "open_app", {"app": "Apple TV"})
+    assert not opened.is_error, text(opened)
+    assert opened.structured_content["verified"] is True and served.fake.foreground_app == "apple.tv"
+    now = await call(served, "get_now_playing")
+    assert now.structured_content["app_on_screen"]["app_id"] == "apple.tv"
+    status = await call(served, "get_box_status")
+    assert status.structured_content["app_on_screen"] == "Apple TV"
+    closed = await call(served, "close_app")
+    assert closed.structured_content["app"]["app_id"] == "apple.tv" and served.fake.foreground_app is None
+    blocked = await call(served, "open_app", {"app": "NBA"})
+    assert blocked.is_error and "blocked" in text(blocked)
+
+
+async def test_menu_tools(served):
+    routes = await call(served, "list_menu_routes")
+    recs = next(r for r in routes.structured_content["routes"] if r["destination"] == "recordings")
+    assert recs["confirmed_on_this_box"] is False
+    went = await call(served, "navigate_to", {"destination": "recordings"})
+    assert went.structured_content["pressed"] == ["tvguide", "down", "down", "select"]
+    assert "Unverified" in went.structured_content["note"]
+    saved = await call(served, "save_menu_route", {"destination": "Recordings",
+                                                   "keys": ["home", "down", "down", "down", "select"]})
+    assert saved.structured_content["saved"] == "recordings"
+    went = await call(served, "navigate_to", {"destination": "recordings"})
+    assert went.structured_content["confirmed_on_this_box"] is True and went.structured_content["note"] is None
+    assert served.registry.get().menu_routes["recordings"][3] == "down"
+    unsafe = await call(served, "save_menu_route", {"destination": "pair", "keys": ["code:224"]})
+    assert unsafe.is_error
+    gone = await call(served, "forget_menu_route", {"destination": "recordings"})
+    assert gone.structured_content["forgotten"] == "recordings"
