@@ -2,6 +2,7 @@
 
 import asyncio
 import functools
+import secrets
 import json
 import logging
 import time
@@ -43,7 +44,8 @@ Prefer the high-level tools, in this order:
 TV listings: for "what's on" questions, use your own usual way of looking up TV listings first
 (e.g. a web search); it's much faster. Only if that fails or isn't available, fall back to
 tv_listings, whats_on or find_programme, which read Sky's guide one channel at a time and can be
-slow (find_programme especially). To record something you found elsewhere, call record_programme
+slow (find_programme especially). Those tools first reply with a fallback_code instead of listings;
+pass it back only if your own lookup failed. To record something you found elsewhere, call record_programme
 with the channel and start time; you don't need these tools first.
 Last resort, for screens with no direct tool: navigate_to a menu destination. Menu routes may be
 wrong for this box and the server can't see the screen, so ask the user what's showing. When they
@@ -313,6 +315,27 @@ def build_server(manager: BoxManager, config: Config) -> MCPServer:
 
     # -- TV guide ------------------------------------------------------------------------------
 
+    # Sky's guide is slow compared with an agent's own listings lookup, and agents tend to use it
+    # anyway. So the listings tools first answer with a message and a code; the agent repeats the
+    # call with the code only if its own lookup failed. Not a security control, just friction at
+    # the point of use. Switch off with guide_gate=False (e.g. for agents without web search).
+    guide_code = secrets.token_hex(3)
+
+    def _gate(fallback_code: str | None) -> dict[str, Any] | None:
+        if not config.guide_gate or (fallback_code or "").strip().lower() == guide_code:
+            return None
+        return {
+            "status": "use_your_own_listings_first",
+            "message": ("Look up TV listings your usual way first (for example a web search): it's much "
+                        "faster than Sky's guide, which is read one channel at a time. Only if that "
+                        "fails or isn't available, call this tool again with fallback_code set to the "
+                        "code below."),
+            "fallback_code": guide_code,
+        }
+
+    FallbackCode = Annotated[str | None, Field(
+        description="Only if your own TV listings lookup failed: the code from this tool's first reply")]
+
     async def _guide_ctx(b):
         return await b.local_time(), await b.guide(), await b.rest.channels()
 
@@ -321,10 +344,13 @@ def build_server(manager: BoxManager, config: Config) -> MCPServer:
         channel: Annotated[str, Field(description="Channel number or name, e.g. 101 or 'BBC One'")],
         day: Annotated[str, Field(description="today, tomorrow, a weekday, or YYYY-MM-DD (up to 6 days ahead)")] = "today",
         from_time: Annotated[str | None, Field(description="Only programmes on at or after this local time, e.g. 19:00 or 7pm")] = None,
+        fallback_code: FallbackCode = None,
         box: Box = None,
     ) -> dict[str, Any]:
         """FALLBACK: a channel's schedule for a day from Sky's TV guide, in the box's local time.
         Prefer your own TV listings lookup (e.g. web search); use this only if that fails."""
+        if (gate := _gate(fallback_code)) is not None:
+            return gate
 
         async def fetch(b):
             tz, guide, channels = await _guide_ctx(b)
@@ -348,10 +374,13 @@ def build_server(manager: BoxManager, config: Config) -> MCPServer:
         channels: Annotated[list[str] | None, Field(description="Channel numbers or names; omit for the main channels")] = None,
         at: Annotated[str | None, Field(description="A local time today, e.g. 21:00; omit for now")] = None,
         day: Annotated[str, Field(description="Day for `at`: today, tomorrow, a weekday or YYYY-MM-DD")] = "today",
+        fallback_code: FallbackCode = None,
         box: Box = None,
     ) -> dict[str, Any]:
         """FALLBACK: what's on (and next) across channels from Sky's TV guide. Slower than your own
         TV listings lookup (e.g. web search); use this only if that fails."""
+        if (gate := _gate(fallback_code)) is not None:
+            return gate
 
         async def fetch(b):
             tz, guide, chlist = await _guide_ctx(b)
@@ -385,11 +414,14 @@ def build_server(manager: BoxManager, config: Config) -> MCPServer:
         channels: Annotated[list[str] | None, Field(description="Channel numbers or names; omit to search all TV channels")] = None,
         include_plus_one: Annotated[bool, Field(description="Also search +1 channels")] = False,
         limit: Annotated[int, Field(ge=1, le=100)] = 30,
+        fallback_code: FallbackCode = None,
         box: Box = None,
     ) -> dict[str, Any]:
         """LAST RESORT, SLOW (often 10-40 s): search Sky's TV guide for upcoming showings of a
         programme across channels. Prefer your own TV listings lookup (e.g. web search); use this
         only if that fails. Narrow it with `channels` and a small `days` where you can."""
+        if (gate := _gate(fallback_code)) is not None:
+            return gate
 
         async def fetch(b):
             tz, guide, chlist = await _guide_ctx(b)

@@ -35,6 +35,7 @@ class Config:
     ssl_keyfile: str | None = None
     discovery_iface: str | None = None
     log_level: str = "INFO"
+    guide_gate: bool = True  # listings tools ask the agent to try its own lookup first
 
     @classmethod
     def from_env(cls) -> Config:
@@ -51,6 +52,7 @@ class Config:
             ssl_keyfile=env.get("SKYQ_MCP_SSL_KEYFILE") or None,
             discovery_iface=env.get("SKYQ_MCP_IFACE") or None,
             log_level=env.get("SKYQ_MCP_LOG_LEVEL", "INFO").upper(),
+            guide_gate=not _bool(env.get("SKYQ_MCP_NO_GUIDE_GATE")),
         )
 
     @property

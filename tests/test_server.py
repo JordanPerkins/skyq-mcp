@@ -122,6 +122,13 @@ async def call(served, tool: str, args: dict | None = None, *, token: str = TOKE
                 return await session.call_tool(tool, args or {})
 
 
+async def guide_call(served, tool: str, args: dict):
+    """Listings tools first reply with a fallback code; call again with it (as an agent would)."""
+    first = await call(served, tool, args)
+    assert first.structured_content["status"] == "use_your_own_listings_first", text(first)
+    return await call(served, tool, {**args, "fallback_code": first.structured_content["fallback_code"]})
+
+
 def text(result) -> str:
     return "".join(c.text for c in result.content if getattr(c, "text", None))
 
@@ -250,26 +257,26 @@ async def test_guide_tools(served):
     now = await call(served, "get_now_playing")
     assert now.structured_content["programme"]["title"].startswith("BBC One Yks HD Show")
     assert now.structured_content["next_programme"] is not None
-    listing = await call(served, "tv_listings", {"channel": "channel 4", "day": "today"})
+    listing = await guide_call(served, "tv_listings", {"channel": "channel 4", "day": "today"})
     assert not listing.is_error, text(listing)
     titles = [p["title"] for p in listing.structured_content["programmes"]]
     assert "Gogglebox" in titles and len(titles) == 24
     assert sum(p["on_now"] for p in listing.structured_content["programmes"]) == 1
-    later = await call(served, "tv_listings", {"channel": "104", "from_time": "21:00"})
+    later = await guide_call(served, "tv_listings", {"channel": "104", "from_time": "21:00"})
     assert later.structured_content["programmes"][0]["title"] == "Gogglebox"
-    on = await call(served, "whats_on", {"channels": ["101", "Channel 4"], "at": "21:30"})
+    on = await guide_call(served, "whats_on", {"channels": ["101", "Channel 4"], "at": "21:30"})
     rows = on.structured_content["channels"]
     assert [r["channel"]["number"] for r in rows] == ["101", "104"] and rows[1]["now"]["title"] == "Gogglebox"
-    found = await call(served, "find_programme", {"query": "gogglebox", "days": 2})
+    found = await guide_call(served, "find_programme", {"query": "gogglebox", "days": 2})
     assert found.structured_content["matches"][0]["channel"]["name"] == "Channel 4 HD"
-    bad = await call(served, "tv_listings", {"channel": "101", "day": "next year"})
+    bad = await guide_call(served, "tv_listings", {"channel": "101", "day": "next year"})
     assert bad.is_error and "couldn't understand the day" in text(bad)
     for r in (now, listing, on, found):
         assert SENSITIVE["householdToken"] not in json.dumps(r.structured_content)
 
 
 async def test_booking_tools(served):
-    listing = await call(served, "tv_listings", {"channel": "104", "day": "tomorrow", "from_time": "21:00"})
+    listing = await guide_call(served, "tv_listings", {"channel": "104", "day": "tomorrow", "from_time": "21:00"})
     goggle = listing.structured_content["programmes"][0]
     booked = await call(served, "record_programme", {"channel": "104", "event_id": goggle["event_id"]})
     assert not booked.is_error, text(booked)
@@ -290,9 +297,40 @@ async def test_booking_tools(served):
 async def test_recording_a_finished_programme_says_so(served):
     from datetime import datetime, timezone
 
-    listing = await call(served, "tv_listings", {"channel": "101", "day": "yesterday"
+    listing = await guide_call(served, "tv_listings", {"channel": "101", "day": "yesterday"
                                                  if datetime.now(timezone.utc).hour < 2 else "today"})
     done = next(p for p in listing.structured_content["programmes"]
                 if datetime.fromisoformat(p["end"]) < datetime.now(timezone.utc))
     r = await call(served, "record_programme", {"channel": "101", "event_id": done["event_id"]})
     assert r.is_error and "already finished" in text(r)
+
+
+
+async def test_guide_tools_ask_for_own_lookup_first(served):
+    for tool, args in [("tv_listings", {"channel": "101"}), ("whats_on", {}),
+                       ("find_programme", {"query": "gogglebox"})]:
+        first = await call(served, tool, args)
+        data = first.structured_content
+        assert not first.is_error and data["status"] == "use_your_own_listings_first"
+        assert "web search" in data["message"] and "programmes" not in data and "matches" not in data
+        wrong = await call(served, tool, {**args, "fallback_code": "nope"})
+        assert wrong.structured_content["status"] == "use_your_own_listings_first"
+        ok = await call(served, tool, {**args, "fallback_code": data["fallback_code"].upper()})
+        assert "status" not in ok.structured_content
+
+
+async def test_gate_replies_dont_fetch_the_guide(served):
+    await call(served, "find_programme", {"query": "anything"})
+    assert served.fake.guide_requests == []
+
+
+async def test_guide_gate_can_be_switched_off(fake, tmp_path):
+    registry = BoxRegistry(tmp_path / "state.json")
+    registry.add(BoxRecord(alias="lounge", hostname="localhost", last_ip="127.0.0.1", id=CONTROL_UDN,
+                           key_gap_ms=60, **fake.ports))
+    manager = BoxManager(registry, timing=FAST, allow_loopback=True,
+                         epg_base_url=f"http://127.0.0.1:{fake.http_port}/as/schedule")
+    config = Config(host="127.0.0.1", data_dir=tmp_path, allowed_hosts=["127.0.0.1"], guide_gate=False)
+    with ServerThread(build_app(config, [TOKEN], manager=manager)) as srv:
+        r = await call(srv, "tv_listings", {"channel": "101"})
+        assert "status" not in r.structured_content and r.structured_content["programmes"]

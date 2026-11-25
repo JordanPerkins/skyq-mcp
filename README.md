@@ -53,7 +53,9 @@ the screen to check.
 **TV listings as a fallback.** The assistant looks up what's on in its usual way (for example a
 web search), which is fast. If that fails, the server can read Sky's own online TV guide: what's
 on now and next, a channel's schedule for any day this week, and searching for a programme across
-channels. That's slower, because Sky's guide is read one channel at a time.
+channels. That's slower, because Sky's guide is read one channel at a time, so those tools first
+reply with a reminder and a code instead of listings; the assistant only uses the code if its own
+lookup failed. (Turn this off with `--no-guide-gate` if your assistant can't search the web.)
 
 **Recording from the guide.** "Record Gogglebox on Friday" or "series link the F1" become a
 single booking of the exact programme from Sky's guide. The server won't double-book, checks the
@@ -399,6 +401,7 @@ What it doesn't protect against:
 | `SKYQ_MCP_ALLOWED_HOSTS` (comma-separated) | `--allowed-host` | extra hostnames clients use to reach the server (e.g. a Tailscale `*.ts.net` name); this machine's hostname, `.local` name and LAN IP are always allowed |
 | `SKYQ_MCP_SSL_CERTFILE` / `SKYQ_MCP_SSL_KEYFILE` | `--ssl-certfile` / `--ssl-keyfile` | off (plain HTTP) |
 | `SKYQ_MCP_ALLOW_UNSAFE_KEYS` | `--allow-unsafe-keys` | off (blocks remote-pairing codes 223–239) |
+| `SKYQ_MCP_NO_GUIDE_GATE` | `--no-guide-gate` | off (listings tools ask the assistant to try its own lookup first) |
 | `SKYQ_MCP_IFACE` | `--iface` | automatic (local IP to search for boxes from, if the machine has several networks) |
 
 Without TLS, the token travels unencrypted on your network.

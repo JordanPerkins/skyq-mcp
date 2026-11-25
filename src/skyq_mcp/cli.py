@@ -28,6 +28,8 @@ def _config(args) -> Config:
             setattr(cfg, attr, value)
     if getattr(args, "allow_unsafe_keys", False):
         cfg.allow_unsafe_keys = True
+    if getattr(args, "no_guide_gate", False):
+        cfg.guide_gate = False
     if getattr(args, "allowed_host", None):
         cfg.allowed_hosts = args.allowed_host
     if getattr(args, "iface", None):
@@ -166,6 +168,8 @@ def main(argv: list[str] | None = None) -> int:
                    help="extra hostname clients use to reach this server, e.g. a Tailscale *.ts.net name "
                         "(repeatable); this machine's own names are always allowed")
     s.add_argument("--allow-unsafe-keys", action="store_true", help="allow key codes 223-239 (remote pairing)")
+    s.add_argument("--no-guide-gate", action="store_true",
+                   help="let agents use Sky's TV guide tools without first being told to try their own lookup")
     s.add_argument("--iface", help="local IP to send discovery multicast from")
     s.add_argument("--log-level", choices=["DEBUG", "INFO", "WARNING", "ERROR"])
     s.set_defaults(func=cmd_serve)
