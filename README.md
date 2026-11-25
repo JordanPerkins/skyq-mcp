@@ -49,6 +49,23 @@ There's no "recordings" button on the remote. The assistant used what it knows a
 menu layout to turn the request into a sequence of key presses, and was upfront that it can't see
 the screen to check.
 
+It also makes **recording precise**. Sky Q records whole programmes as they appear in the guide,
+so recording a race or a match means also recording the hour of build-up before it. With this
+server, a scheduled Claude automation can start and stop a recording at exact times instead.
+For example:
+
+> **"At 1:55pm on Sunday, tune to Sky Sports F1 and start recording. Stop at 4:00pm."**
+
+At 1:55pm the automation tunes the box with `change_channel` and presses record with
+`playback`; at 4:00pm it presses stop. You get the race itself, without the pre-race build-up.
+It can also check listings first, so "record the race itself, not the build-up" works without
+you looking up the start time.
+
+This hasn't been tested end to end on a real box yet. Sky Q may ask you to confirm before
+stopping a recording, in which case the automation also needs to press select. The automation
+must also be able to reach the server when it runs: on your network, or from anywhere through
+Tailscale Funnel (see below).
+
 The server provides the reliable parts: finding your box on the network, sending keys with the
 right timing, changing channel and checking it worked, and reporting what's on. The assistant
 brings the knowledge and the judgement.
