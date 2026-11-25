@@ -1,0 +1,23 @@
+__pycache__/
+*.py[cod]
+.venv/
+dist/
+build/
+*.egg-info/
+.pytest_cache/
+
+# Data captured from a real box during the spike (may identify the household)
+spike/fixtures/
+sweep_results.json
+retest_results.json
+
+# Local secrets / state
+.env
+state.json
+token
+
+# Not part of the published project
+spike/
+PLAN.md
+jordan@rpi.local
+.DS_Store

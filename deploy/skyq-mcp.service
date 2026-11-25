@@ -1,0 +1,47 @@
+# systemd unit for skyq-mcp. Install steps: see "Running as a service" in README.md.
+#
+# Runs as a dedicated `skyq-mcp` system user with its saved boxes and token in
+# /var/lib/skyq-mcp. Optional settings (TLS, port, …) go in /etc/skyq-mcp.env.
+
+[Unit]
+Description=Sky Q MCP server
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=skyq-mcp
+Group=skyq-mcp
+Environment=SKYQ_MCP_DATA_DIR=/var/lib/skyq-mcp
+EnvironmentFile=-/etc/skyq-mcp.env
+ExecStart=/opt/skyq-mcp/bin/skyq-mcp serve
+Restart=on-failure
+RestartSec=5
+
+StateDirectory=skyq-mcp
+StateDirectoryMode=0700
+
+# Hardening. Network access stays open: discovery uses SSDP and mDNS multicast.
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+SystemCallArchitectures=native
+# AF_NETLINK: listing network interfaces for mDNS
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK
+CapabilityBoundingSet=
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target
