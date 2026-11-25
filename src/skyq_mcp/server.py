@@ -1,8 +1,11 @@
 """The MCP server: tools and resources for discovering and controlling Sky Q boxes."""
 
+import asyncio
 import functools
 import json
 import logging
+import time
+from datetime import timedelta
 from typing import Annotated, Any, Literal
 
 from mcp.server.mcpserver import MCPServer
@@ -16,7 +19,7 @@ from .auth import BearerAuthMiddleware
 from .config import Config, default_allowed_hosts, host_patterns
 from .manager import BoxManager
 from .skyq.errors import SkyQError
-from .skyq import menus
+from .skyq import epg, menus
 from .skyq.keys import ALIASES, KEYS, UNSAFE_CODES
 from .skyq.rest import RECORDING_STATUSES
 from .store import BoxRegistry
@@ -33,7 +36,9 @@ Every control tool takes an optional `box` alias; leave it out to use the defaul
 Prefer the high-level tools, in this order:
 - change_channel (by number or name; checks the box got there) and list_channels;
 - open_app / close_app for apps like Netflix or Apple TV (checks the app is on screen) and list_apps;
-- power_on / power_off (only press power when needed); get_now_playing; list_recordings.
+- power_on / power_off (only press power when needed); get_now_playing; list_recordings;
+- tv_listings, whats_on and find_programme for TV listings from Sky's guide (use these rather
+  than searching the web for what's on).
 Last resort, for screens with no direct tool: navigate_to a menu destination. Menu routes may be
 wrong for this box and the server can't see the screen, so ask the user what's showing. When they
 confirm a route works (or you find the right keys with navigate/press_sequence), save it with
@@ -189,7 +194,10 @@ def build_server(manager: BoxManager, config: Config) -> MCPServer:
         action: Literal["play", "pause", "stop", "fastforward", "rewind", "record"],
         box: Box = None,
     ) -> dict[str, Any]:
-        """Play, pause, stop, fast-forward, rewind, or record what's on."""
+        """Play, pause, stop, fast-forward or rewind. 'record' presses the record button: on live TV
+        Sky Q records the current programme AND sets up a series link (pressing it again makes it
+        a single recording), and the recording includes what's already in the live buffer.
+        'stop' doesn't end a recording in progress."""
         return {"pressed": await manager.run(box, lambda b: b.press([action]))}
 
     # -- channels & power ----------------------------------------------------------------
@@ -296,6 +304,94 @@ def build_server(manager: BoxManager, config: Config) -> MCPServer:
         return {"storage": storage.to_dict() if storage else None,
                 "total_matching": len(found),
                 "recordings": [r.to_dict() for r in found[:limit]]}
+
+    # -- TV guide ------------------------------------------------------------------------------
+
+    async def _guide_ctx(b):
+        return await b.local_time(), await b.guide(), await b.rest.channels()
+
+    @tool(READ_ONLY, "TV listings for a channel")
+    async def tv_listings(
+        channel: Annotated[str, Field(description="Channel number or name, e.g. 101 or 'BBC One'")],
+        day: Annotated[str, Field(description="today, tomorrow, a weekday, or YYYY-MM-DD (up to 6 days ahead)")] = "today",
+        from_time: Annotated[str | None, Field(description="Only programmes on at or after this local time, e.g. 19:00 or 7pm")] = None,
+        box: Box = None,
+    ) -> dict[str, Any]:
+        """A channel's schedule for a day, from Sky's TV guide, in the box's local time."""
+
+        async def fetch(b):
+            tz, guide, channels = await _guide_ctx(b)
+            ch = channels.find(channel)
+            d = epg.parse_day(day, tz.today())
+            start, end = tz.day_bounds(d)
+            after = epg.parse_time(from_time, d, tz)
+            progs = await guide.programmes(ch, start, end)
+            if after is not None:
+                progs = [p for p in progs if p.end > after]
+            now = time.time()
+            return ch, d, [{**p.to_dict(tz), "on_now": p.on_at(now)} for p in progs]
+
+        ch, d, progs = await manager.run(box, fetch)
+        for p in progs:
+            p.pop("channel", None)
+        return {"channel": {"number": ch.number, "name": ch.name}, "day": d.isoformat(), "programmes": progs}
+
+    @tool(READ_ONLY, "What's on now")
+    async def whats_on(
+        channels: Annotated[list[str] | None, Field(description="Channel numbers or names; omit for the main channels")] = None,
+        at: Annotated[str | None, Field(description="A local time today, e.g. 21:00; omit for now")] = None,
+        day: Annotated[str, Field(description="Day for `at`: today, tomorrow, a weekday or YYYY-MM-DD")] = "today",
+        box: Box = None,
+    ) -> dict[str, Any]:
+        """What's on (and what's next) across channels, from Sky's TV guide."""
+
+        async def fetch(b):
+            tz, guide, chlist = await _guide_ctx(b)
+            chosen = [chlist.find(c) for c in channels] if channels else epg.search_channels(chlist.channels, limit=25)
+            when = epg.parse_time(at, epg.parse_day(day, tz.today()), tz) or time.time()
+            pairs = await asyncio.gather(*(guide.now_next(c, when) for c in chosen), return_exceptions=True)
+            rows = []
+            for c, pair in zip(chosen, pairs):
+                if isinstance(pair, BaseException):
+                    if isinstance(pair, epg.GuideUnavailable) and not rows:
+                        raise pair
+                    continue
+                now, nxt = pair
+                rows.append({"channel": {"number": c.number, "name": c.name},
+                             "now": _brief(now, tz), "next": _brief(nxt, tz)})
+            return tz.iso(when), rows
+
+        when, rows = await manager.run(box, fetch)
+        return {"at": when, "channels": rows}
+
+    def _brief(p, tz):
+        if p is None:
+            return None
+        d = p.to_dict(tz)
+        return {k: d[k] for k in ("title", "start", "end", "event_id", "season", "episode", "new")}
+
+    @tool(READ_ONLY, "Find a programme")
+    async def find_programme(
+        query: Annotated[str, Field(description="Words in the programme title, e.g. 'gogglebox' or 'f1'")],
+        days: Annotated[int, Field(ge=1, le=7, description="How many days ahead to search, starting today")] = 2,
+        channels: Annotated[list[str] | None, Field(description="Channel numbers or names; omit to search all TV channels")] = None,
+        include_plus_one: Annotated[bool, Field(description="Also search +1 channels")] = False,
+        limit: Annotated[int, Field(ge=1, le=100)] = 30,
+        box: Box = None,
+    ) -> dict[str, Any]:
+        """Search Sky's TV guide for upcoming showings of a programme by title (from now on)."""
+
+        async def fetch(b):
+            tz, guide, chlist = await _guide_ctx(b)
+            chosen = ([chlist.find(c) for c in channels] if channels
+                      else epg.search_channels(chlist.channels, include_plus_one=include_plus_one))
+            start = time.time()
+            _, end = tz.day_bounds(tz.today() + timedelta(days=days - 1))
+            found = await guide.search(query, chosen, start, end, limit=limit)
+            return len(chosen), [p.to_dict(tz) for p in found]
+
+        searched, found = await manager.run(box, fetch)
+        return {"channels_searched": searched, "matches": found}
 
     # -- apps ----------------------------------------------------------------------------------
 

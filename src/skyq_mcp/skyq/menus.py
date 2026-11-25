@@ -19,15 +19,35 @@ DESTINATION_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,39}$")
 MAX_ROUTE_KEYS = 30
 MENU_GAP_MS = 400  # menus animate; slower than channel digits
 
-# Unverified guesses at the Sky Q Home menu. Each starts from Home so it doesn't depend on
-# where the box was. Correct ones get saved per box with save_menu_route.
+# The Sky Q Home menu, top to bottom, as reported by a user on an ES340 (Q370, UK), 2026-11-26.
+# Routes press Home, move down to the item and select it. The order is from a real box, but each
+# route stays unconfirmed until the user checks it: the highlight is assumed to start on "Home",
+# and menus can differ by region, software version and subscription. Confirmed routes get saved
+# per box with save_menu_route and take priority.
+HOME_MENU = [
+    ("home", "Home"),
+    ("tv-guide", "TV Guide"),
+    ("recordings", "Recordings"),
+    ("catch-up-tv", "Catch Up TV"),
+    ("on-demand", "On Demand"),
+    ("best-of-sky", "Best of Sky"),
+    ("sky-cinema", "Sky Cinema"),
+    ("sky-store", "Sky Store"),
+    ("sport", "Sport"),
+    ("kids", "Kids"),
+    ("apps", "Apps"),
+    ("audio-and-music", "Audio and Music"),
+    ("settings", "Settings"),
+    ("help", "Help"),
+    ("my-sky", "My Sky"),
+]
+
 BUILT_IN: dict[str, tuple[list[str], str]] = {
-    "home": (["home"], "The Home menu"),
-    "search": (["home", "select"], "Search (assumed first item on the Home menu)"),
-    "tv-guide": (["home", "down", "select"], "TV Guide (assumed second item on the Home menu)"),
-    "recordings": (["home", "down", "down", "select"], "Recordings (assumed third item on the Home menu)"),
-    "settings": (["home", "up", "select"], "Settings (assumed last item, reached by wrapping up from the top)"),
+    dest: (["home"] if i == 0 else ["home"] + ["down"] * i + ["select"],
+           "The Home menu" if i == 0 else f"{label} (item {i + 1} on the Home menu)")
+    for i, (dest, label) in enumerate(HOME_MENU)
 }
+BUILT_IN["search"] = (["search"], "Search, using the remote's search key")
 
 
 @dataclass(frozen=True)

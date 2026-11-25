@@ -301,6 +301,23 @@ class RestClient:
             return None
         return Storage(used=used, total=total)
 
+    async def time_info(self) -> dict[str, Any]:
+        """The box's clock and time zone (/as/system/time)."""
+        status, data = await self._get("/as/system/time")
+        if status != 200 or not isinstance(data, dict):
+            raise ProtocolError(f"/as/system/time returned HTTP {status}")
+        return {k: data.get(k) for k in ("utc", "presentLocalTimeOffset", "futureLocalTimeOffset",
+                                          "futureTransitionUtc")}
+
+    async def country_code(self) -> str | None:
+        """ISO country of the box's Sky account (e.g. GBR). /as/system/deviceinformation also
+        returns the household token and IP address: only countryCode is read."""
+        status, data = await self._get("/as/system/deviceinformation")
+        if status != 200 or not isinstance(data, dict):
+            return None
+        code = data.get("countryCode")
+        return code if isinstance(code, str) and code.isalpha() and len(code) <= 3 else None
+
     async def recording(self, pvr_hex_id: str) -> Recording | None:
         """Details of a recording, from the hex id in a `file://pvr/<id>` URI."""
         if not HEX_ID_RE.match(pvr_hex_id):  # comes from the box: never let it shape the URL

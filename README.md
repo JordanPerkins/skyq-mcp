@@ -1,8 +1,8 @@
 # skyq-mcp
 
 An MCP server for controlling Sky Q boxes on your local network: discovery, every remote key,
-channel changes, power, opening apps, your recordings list, and what's playing now. Designed to
-run on a Raspberry Pi.
+channel changes, power, opening apps, TV listings, your recordings list, and what's playing now.
+Designed to run on a Raspberry Pi.
 
 > Unofficial. Sky Q is a trademark of Sky UK Limited; this project isn't affiliated with Sky.
 
@@ -49,6 +49,10 @@ was ambiguous (UK or US version) and offered the alternative.
 There's no "recordings" button on the remote. The assistant used what it knows about the Sky Q
 menu layout to turn the request into a sequence of key presses, and was upfront that it can't see
 the screen to check.
+
+**TV listings are built in.** The box only reports which channel it's on, so the server also
+reads Sky's own online TV guide: what's on now and next, a channel's schedule for any day this
+week, and searching for a programme across channels, all in your box's local time.
 
 **Apps open directly.** "Go to Apple TV" doesn't need any menu navigation: the server reads the
 list of apps installed on your box, opens the right one by name, and checks it's on screen. That
@@ -137,6 +141,9 @@ Connect a client, e.g. Claude Code (replace the IP and token):
 ```bash
 claude mcp add --transport http skyq http://192.168.1.50:8765/mcp --header "Authorization: Bearer YOUR_TOKEN"
 ```
+
+TV listings come from Sky's online guide, so the Pi needs internet access for those; everything
+else works on your home network alone.
 
 ## Running as a service
 
@@ -336,7 +343,8 @@ What the server protects against:
 - **Browser attacks.** Requests from web pages (with an `Origin` header) are refused, and the
   `Host` header must be one of this machine's names or one you allow, which blocks DNS rebinding.
 - **Being turned against your network.** The server only contacts Sky Q boxes on local network
-  ranges (192.168.x.x, 10.x.x.x, 172.16–31.x.x, 169.254.x.x). It won't save a box on a public
+  ranges (192.168.x.x, 10.x.x.x, 172.16–31.x.x, 169.254.x.x), plus one fixed internet address:
+  Sky's TV guide (`atlantis.epgsky.com`, over HTTPS), for listings. It won't save a box on a public
   address, scan public ranges, or follow a hostname that starts pointing outside your network.
   A device on your network pretending to be a box can't redirect the server's requests to other
   addresses, and oversized replies are cut off.

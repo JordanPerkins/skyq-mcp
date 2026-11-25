@@ -115,6 +115,10 @@ async def test_launch_refused_by_box(fake, monkeypatch):
 def test_built_in_routes_are_unverified_and_saved_ones_win():
     routes = {r.destination: r for r in menus.all_routes({})}
     assert routes["recordings"].keys == ["home", "down", "down", "select"]
+    assert routes["settings"].keys == ["home"] + ["down"] * 12 + ["select"]
+    assert routes["my-sky"].keys == ["home"] + ["down"] * 14 + ["select"]
+    assert routes["home"].keys == ["home"] and routes["search"].keys == ["search"]
+    assert len(routes) == 16
     assert not any(r.confirmed for r in routes.values())
     saved = menus.all_routes({"recordings": ["home", "down", "down", "down", "select"], "sky-sports": ["home"]})
     by = {r.destination: r for r in saved}

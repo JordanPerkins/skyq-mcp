@@ -28,5 +28,10 @@ def fake(make_fake) -> FakeSkyQ:
     return make_fake()
 
 
+def guide_url(fake: FakeSkyQ) -> str:
+    return f"http://127.0.0.1:{fake.http_port}/as/schedule"
+
+
 def box_for(fake: FakeSkyQ, *, key_gap_ms: int = 60, allow_unsafe: bool = False) -> SkyQBox:
-    return SkyQBox("127.0.0.1", key_gap_ms=key_gap_ms, timing=FAST, allow_unsafe=allow_unsafe, **fake.ports)
+    return SkyQBox("127.0.0.1", key_gap_ms=key_gap_ms, timing=FAST, allow_unsafe=allow_unsafe,
+                   epg_base_url=guide_url(fake), **fake.ports)

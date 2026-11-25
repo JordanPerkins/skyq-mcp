@@ -73,6 +73,24 @@ APPS = [
      "visibleOnTray": False},
 ]
 
+def fake_schedule(day: str, sid: str) -> list[dict]:
+    """Hourly programmes for a UTC day, starting the evening before (like Sky's guide), plus
+    Gogglebox on Channel 4 at 21:00 UTC every day."""
+    import datetime as _dt
+    ch = next((c for c in SERVICES if c["sid"] == sid), None)
+    if ch is None:
+        return []
+    midnight = int(_dt.datetime.strptime(day, "%Y%m%d").replace(tzinfo=_dt.timezone.utc).timestamp())
+    events = []
+    for h in range(-2, 24):
+        st = midnight + h * 3600
+        title = "Gogglebox" if (ch["c"] == "104" and h == 21) else f"{ch['t']} Show {h % 24:02d}"
+        events.append({"eid": f"E{sid}-{st}", "t": title, "st": st, "d": 3600, "sy": f"About {title}.",
+                       "seasonnumber": 1, "episodenumber": h % 24, "new": h == 20, "s": True, "ad": False,
+                       "canb": True, "canl": True})
+    return events
+
+
 SENSITIVE = {
     "householdToken": "SECRET-HOUSEHOLD-TOKEN",
     "serialNumber": "SECRET-SERIAL",
@@ -117,6 +135,8 @@ class FakeSkyQ:
         self.ignore_app_launch = ignore_app_launch
         self.app_status_broken = app_status_broken
         self.app_requests: list[tuple[str, str]] = []
+        self.guide_requests: list[tuple[str, str]] = []
+        self.guide_down = False
         self.received: list[int] = []
         self.handshake_errors: list[str] = []
         self._last_digit = 0.0
@@ -309,6 +329,27 @@ class FakeSkyQ:
             return self._send(h, 200, json.dumps(info).encode())
         if path == "/as/services":
             return self._send(h, 200, json.dumps({"documentId": "1", "services": SERVICES, "version": 1}).encode())
+        if path == "/as/system/time":
+            import time as _t
+            return self._send(h, 200, json.dumps({"utc": int(_t.time()), "presentLocalTimeOffset": 0,
+                                                  "futureLocalTimeOffset": 3600,
+                                                  "futureTransitionUtc": int(_t.time()) + 400 * 86400}).encode())
+        if path == "/as/system/deviceinformation":
+            return self._send(h, 200, json.dumps({"countryCode": "GBR", "bouquet": 4103,
+                                                  "householdToken": SENSITIVE["householdToken"],
+                                                  "IPAddress": SENSITIVE["IPAddress"]}).encode())
+        if path.startswith("/as/schedule/"):
+            if (h.headers.get("x-skyott-territory") != "GB" or h.headers.get("x-skyott-provider") != "SKY"
+                    or h.headers.get("x-skyott-proposition") != "SKYQ"):
+                return self._send(h, 400, b'{"errorCode": "missing headers"}')
+            parts = path.split("/")
+            day, sid = parts[3], parts[4]
+            self.guide_requests.append((day, sid))
+            if self.guide_down:
+                return self._send(h, 503, b"")
+            if "," in sid:
+                return self._send(h, 400, b'{"errorCode": "bad sid"}')
+            return self._send(h, 200, json.dumps({"schedule": [{"sid": sid, "events": fake_schedule(day, sid)}]}).encode())
         if path == "/as/apps":
             return self._send(h, 200, json.dumps({"apps": APPS, "version": 1}).encode())
         if path == "/as/pvr/storage":

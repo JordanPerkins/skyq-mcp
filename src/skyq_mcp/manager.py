@@ -57,7 +57,7 @@ class BoxManager:
                  discover_fn: DiscoverFn = discovery.discover, identify_fn: IdentifyFn = discovery.identify,
                  resolve_fn: ResolveFn = names.resolve, hostnames_fn: HostnamesFn = names.find_hostnames,
                  verify_fn: VerifyFn = verify_identity, rediscover_timeout: float = 3.0,
-                 allow_loopback: bool = False):
+                 allow_loopback: bool = False, epg_base_url: str | None = None):
         self.registry = registry
         self.allow_unsafe = allow_unsafe
         self.timing = timing
@@ -69,6 +69,7 @@ class BoxManager:
         self.rediscover_timeout = rediscover_timeout
         # Only local-network addresses are ever contacted. Loopback is for tests/development.
         self.allow_loopback = allow_loopback
+        self.epg_base_url = epg_base_url  # tests point this at a fake guide
         self._resolved: dict[str, _Resolved] = {}
         self._boxes: dict[str, tuple[tuple, SkyQBox]] = {}
         self._last_seen_written: dict[str, float] = {}
@@ -84,7 +85,7 @@ class BoxManager:
         box = SkyQBox(ip, remote_port=record.remote_port, rest_port=record.rest_port,
                       upnp_port=record.upnp_port, key_gap_ms=record.key_gap_ms,
                       timing=self.timing, allow_unsafe=self.allow_unsafe,
-                      app_status_port=record.app_status_port)
+                      app_status_port=record.app_status_port, epg_base_url=self.epg_base_url)
         self._boxes[record.alias] = (key, box)
         return box
 

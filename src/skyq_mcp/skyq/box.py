@@ -12,6 +12,7 @@ from .errors import ChannelChangeFailed, SkyQError
 from .keys import KEYS, key_name, resolve_key
 from .remote import DEFAULT_GAP_MS, REMOTE_PORT, RemoteClient
 from .apps import App, AppsClient, foreground_app
+from .epg import EPG_BASE, EpgClient, LocalTime, Programme, territory_for
 from .rest import HEX_ID_RE, REST_PORT, Channel, Recording, RestClient
 from .upnp import UPNP_PORT, UpnpClient
 
@@ -40,15 +41,23 @@ class NowPlaying:
     speed: str | None
     channel: Channel | None = None
     recording: Recording | None = None
+    programme: dict[str, Any] | None = None  # live TV: what's on now, from Sky's guide
+    next_programme: dict[str, Any] | None = None
+    guide_note: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        d = {
             "source": self.source,
             "state": self.state,
             "speed": self.speed,
             "channel": self.channel.to_dict() if self.channel else None,
             "recording": self.recording.to_dict() if self.recording else None,
         }
+        if self.source == "live":
+            d.update(programme=self.programme, next_programme=self.next_programme)
+            if self.guide_note:
+                d["guide_note"] = self.guide_note
+        return d
 
 
 @dataclass(frozen=True)
@@ -110,7 +119,7 @@ class SkyQBox:
     def __init__(self, host: str, *, remote_port: int = REMOTE_PORT, rest_port: int = REST_PORT,
                  upnp_port: int = UPNP_PORT, key_gap_ms: int = DEFAULT_GAP_MS,
                  timing: Timing | None = None, allow_unsafe: bool = False,
-                 app_status_port: int | None = None):
+                 app_status_port: int | None = None, epg_base_url: str | None = None):
         self.host = host
         self.timing = timing or Timing()
         self.allow_unsafe = allow_unsafe
@@ -120,6 +129,9 @@ class SkyQBox:
         self.apps = AppsClient(host, port=rest_port, status_port=app_status_port)
         self._channel_lock = asyncio.Lock()
         self._app_lock = asyncio.Lock()
+        self._epg_base_url = epg_base_url
+        self._guide: EpgClient | None = None
+        self._tz: tuple[float, LocalTime] | None = None
 
     # -- keys ----------------------------------------------------------------------
 
@@ -144,7 +156,18 @@ class SkyQBox:
         parsed = parse_uri(media.uri)
         if parsed and parsed[0] == "live":
             channels = await self.rest.channels()
-            return NowPlaying("live", transport.state, transport.speed, channel=channels.by_sid(parsed[1]))
+            channel = channels.by_sid(parsed[1])
+            prog = nxt = note = None
+            if channel is not None and transport.state == "PLAYING":
+                try:
+                    tz = await self.local_time()
+                    now, after = await (await self.guide()).now_next(channel)
+                    prog = now.to_dict(tz) if now else None
+                    nxt = after.to_dict(tz) if after else None
+                except SkyQError as e:
+                    note = str(e)
+            return NowPlaying("live", transport.state, transport.speed, channel=channel,
+                              programme=prog, next_programme=nxt, guide_note=note)
         if parsed and parsed[0] == "recording":
             return NowPlaying("recording", transport.state, transport.speed,
                               recording=await self.rest.recording(parsed[1]))
@@ -211,6 +234,28 @@ class SkyQBox:
             if seen == number or time.monotonic() >= deadline:
                 return seen
             await asyncio.sleep(self.timing.poll_interval)
+
+    # -- TV guide -------------------------------------------------------------------
+
+    async def local_time(self) -> LocalTime:
+        """The box's time zone, refreshed hourly."""
+        if self._tz is None or time.monotonic() - self._tz[0] > 3600:
+            try:
+                self._tz = (time.monotonic(), LocalTime.from_api(await self.rest.time_info()))
+            except SkyQError:
+                if self._tz is None:
+                    return LocalTime()
+        return self._tz[1]
+
+    async def guide(self) -> EpgClient:
+        """Sky's online guide for this box's country (UK unless the box says otherwise)."""
+        if self._guide is None:
+            try:
+                country = await self.rest.country_code()
+            except SkyQError:
+                country = None
+            self._guide = EpgClient(territory_for(country), base_url=self._epg_base_url or EPG_BASE)
+        return self._guide
 
     # -- apps ----------------------------------------------------------------------
 
