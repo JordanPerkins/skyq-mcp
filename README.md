@@ -7,6 +7,52 @@ channel changes, power, and what's playing now. Designed to run on a Raspberry P
 
 **Status:** working; not yet published on PyPI.
 
+## Why?
+
+A remote control makes you translate what you want into button presses: look up the channel
+number, find the programme in the guide, remember where things are in the menus. An AI assistant
+with this server can do that translation for you, because it can combine the box's controls with
+everything else it knows or can look up: the box's own channel list, TV listings (the EPG) from
+the web, and how the Sky Q menus are laid out.
+
+These examples come from a real conversation with Claude using this server:
+
+> **"Change channel on Sky to Sky Sports F1 UHD"**
+>
+> Your living room Sky box is now on Sky Sports F1 UHD, channel 407. The box confirmed the switch.
+
+The assistant found the channel by name in the box's lineup (no need to know it's 407), tuned
+to it, and checked the box had actually changed channel.
+
+> **"Switch to whatever channel is currently showing The Office"**
+>
+> I've switched you to U&Gold HD on channel 110. Online TV listings show The Office (UK) on
+> U&Gold from 10:20pm, so it should be partway through now. The box confirmed the channel change,
+> but it doesn't report programme names, so I couldn't check the title from here.
+>
+> If you meant the US version, Comedy Central is on channel 112, but I couldn't find a reliable UK
+> listing for it tonight. Just say and I'll switch.
+
+The box can't search for a programme, but the assistant can: it looked up tonight's listings
+online, found the channel, matched it to your box's lineup, and tuned. It also noticed the request
+was ambiguous (UK or US version) and offered the alternative.
+
+> **"Go to my recordings"**
+>
+> I've opened the Sky Q Home menu and gone to the third item, which is usually Recordings. I can't
+> see your TV screen, so I couldn't confirm it worked.
+>
+> If your menu has been reordered and you've landed somewhere else, tell me what's on screen and
+> I'll move up or down from there.
+
+There's no "recordings" button on the remote. The assistant used what it knows about the Sky Q
+menu layout to turn the request into a sequence of key presses, and was upfront that it can't see
+the screen to check.
+
+The server provides the reliable parts: finding your box on the network, sending keys with the
+right timing, changing channel and checking it worked, and reporting what's on. The assistant
+brings the knowledge and the judgement.
+
 ## Quick start (on the Pi)
 
 Get the code:
