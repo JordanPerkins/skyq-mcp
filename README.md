@@ -345,3 +345,7 @@ python3 -m venv .venv
 ```bash
 .venv/bin/pytest
 ```
+
+## License
+
+MIT — see [LICENSE](LICENSE).
